@@ -832,8 +832,26 @@ function updateEnemyCount() {
 function endGame(win, customMsg) {
     gameState.isGameOver = true;
     overlay.classList.remove('hidden');
-    resultMsg.textContent = customMsg || (win ? '你赢了！' : '游戏结束');
+    const msg = customMsg || (win ? '你赢了！' : '游戏结束');
+    resultMsg.textContent = msg;
     resultMsg.style.color = win ? '#2ecc71' : '#e74c3c';
+
+    // AI 互博模式：5秒后自动重新开始
+    if (gameState.mode === 'ai-vs-ai') {
+        let countdown = 5;
+        const updateCountdown = () => {
+            if (!gameState.isGameOver || gameState.mode !== 'ai-vs-ai') return;
+            
+            resultMsg.textContent = `${msg} (${countdown}秒后自动重启)`;
+            if (countdown <= 0) {
+                start();
+            } else {
+                countdown--;
+                gameState.restartTimer = setTimeout(updateCountdown, 1000);
+            }
+        };
+        updateCountdown();
+    }
 }
 
 let playerMoveInterval = null;
@@ -864,6 +882,12 @@ function handlePlayerMovement() {
 }
 
 function start() {
+    // 清除可能存在的自动重启定时器
+    if (gameState.restartTimer) {
+        clearTimeout(gameState.restartTimer);
+        gameState.restartTimer = null;
+    }
+
     gameState.powerUps.forEach(p => p.destroy());
     gameState.powerUps = [];
     gameState.bombs = [];
@@ -943,6 +967,7 @@ function start() {
     
     gameState.isStarted = true;
     gameState.isGameOver = false;
+    overlay.classList.add('hidden');
     document.getElementById('start-screen').classList.add('hidden');
     updateEnemyCount();
     updateStatusDisplay();
