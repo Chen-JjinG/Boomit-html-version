@@ -888,26 +888,6 @@ function start() {
         gameState.restartTimer = null;
     }
 
-    // 彻底清理之前的实体和定时器
-    gameState.enemies.forEach(e => {
-        if (e.aiInterval) clearInterval(e.aiInterval);
-        if (e.element && e.element.parentNode) board.removeChild(e.element);
-    });
-    gameState.players.forEach(p => {
-        if (p.element && p.element.parentNode) board.removeChild(p.element);
-    });
-    
-    gameState.bombs.forEach(b => {
-        if (b.element && b.element.parentNode) board.removeChild(b.element);
-    });
-    gameState.landmines.forEach(m => {
-        if (m.element && m.element.parentNode) board.removeChild(m.element);
-    });
-    gameState.rockets.forEach(r => {
-        if (r.element && r.element.parentNode) board.removeChild(r.element);
-        if (r.moveInterval) clearInterval(r.moveInterval);
-    });
-
     gameState.powerUps.forEach(p => p.destroy());
     gameState.powerUps = [];
     gameState.bombs = [];
@@ -988,53 +968,13 @@ function start() {
     gameState.isStarted = true;
     gameState.isGameOver = false;
     overlay.classList.add('hidden');
-    startScreen.classList.add('hidden');
+    document.getElementById('start-screen').classList.add('hidden');
     updateEnemyCount();
     updateStatusDisplay();
 
     if (playerMoveInterval) clearInterval(playerMoveInterval);
     playerMoveInterval = setInterval(handlePlayerMovement, 30);
 }
-
-// 在文件末尾添加按 E 键进入菜单的逻辑
-window.addEventListener('keydown', (e) => {
-    if (e.key.toLowerCase() === 'e') {
-        // 停止当前游戏（如果是 AI 互博）
-        if (gameState.mode === 'ai-vs-ai') {
-            if (gameState.restartTimer) {
-                clearTimeout(gameState.restartTimer);
-                gameState.restartTimer = null;
-            }
-            // 彻底清理当前 AI
-            gameState.enemies.forEach(enemy => {
-                if (enemy.aiInterval) clearInterval(enemy.aiInterval);
-                if (enemy.element && enemy.element.parentNode) {
-                    board.removeChild(enemy.element);
-                }
-            });
-            gameState.enemies = [];
-            gameState.isStarted = false;
-            gameState.isGameOver = false;
-            
-            // 显示开始界面
-            startScreen.classList.remove('hidden');
-            overlay.classList.add('hidden');
-        }
-    }
-});
-
-// 页面加载后自动开启 AI 互博模式
-window.onload = () => {
-    gameState.mode = 'ai-vs-ai';
-    gameState.isTestMode = false;
-    clearSelection();
-    if (aiVsAiBtn) aiVsAiBtn.classList.add('selected');
-    document.getElementById('p2-selection').classList.add('hidden');
-    document.getElementById('p2-controls').classList.add('hidden');
-    
-    // 自动点击开始按钮
-    start();
-};
 
 // UI 交互
 const singleBtn = document.getElementById('single-player-btn');
