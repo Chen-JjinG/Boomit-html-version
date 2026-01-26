@@ -1,0 +1,9 @@
+*.rar
+*.zip
+*.7z
+.DS_Store
+Thumbs.db
+node_modules/
+dist/
+.vscode/
+.trae/

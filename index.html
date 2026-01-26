@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>爆破超人 - Boomman</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-container">
+        <!-- 左侧状态栏 -->
+        <div id="left-panel" class="side-panel">
+            <div id="status-p1" class="status-card">
+                <h4><span class="icon">🤖</span> P1</h4>
+                <div class="status-items">
+                    <div class="item-row">🔥 <span id="p1-range">1</span></div>
+                    <div class="item-row">👟 <span id="p1-speed">1</span></div>
+                    <div class="item-row">💣 <span id="p1-bombs">1</span></div>
+                    <div class="item-row">🚩 <span id="p1-landmines">0</span></div>
+                    <div class="item-row">🚀 <span id="p1-rockets">0</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中间游戏区域 -->
+        <div id="game-main">
+            <div id="ui-header">
+                <div class="stats">
+                    <div>剩余敌人: <span id="enemy-count">3</span></div>
+                </div>
+                <h1>爆破超人</h1>
+                <div class="timer">时间: <span id="game-timer">02:00</span></div>
+            </div>
+            <div id="game-board">
+                <!-- 游戏地图将由JS动态生成 -->
+            </div>
+        </div>
+
+        <!-- 右侧状态栏 -->
+        <div id="right-panel" class="side-panel">
+            <div id="status-p2" class="status-card hidden">
+                <h4><span class="icon">🤖</span> P2</h4>
+                <div class="status-items">
+                    <div class="item-row">🔥 <span id="p2-range">1</span></div>
+                    <div class="item-row">👟 <span id="p2-speed">1</span></div>
+                    <div class="item-row">💣 <span id="p2-bombs">1</span></div>
+                    <div class="item-row">🚩 <span id="p2-landmines">0</span></div>
+                    <div class="item-row">🚀 <span id="p2-rockets">0</span></div>
+                </div>
+            </div>
+            <!-- 动态添加敌人状态 -->
+            <div id="enemy-status-container"></div>
+        </div>
+
+        <!-- 遮罩层 -->
+        <div id="overlay" class="hidden">
+            <h2 id="result-message">游戏结束</h2>
+            <button onclick="location.reload()">重新开始</button>
+        </div>
+        
+        <!-- 开始界面 -->
+        <div id="start-screen">
+            <h2>爆破超人</h2>
+            <div class="mode-selection">
+                <button id="single-player-btn" class="mode-btn selected">单人游玩</button>
+                <button id="multi-player-btn" class="mode-btn">双人对抗</button>
+                <button id="ai-vs-ai-btn" class="mode-btn">AI 互博</button>
+                <button id="test-mode-btn" class="mode-btn">测试模式</button>
+            </div>
+            
+            <div class="character-selection">
+                <div class="p-selection" id="p1-selection">
+                    <h3>P1 选择角色</h3>
+                    <div class="char-list">
+                        <div class="char-option selected" data-char="0" style="background: #3498db;">🤖</div>
+                        <div class="char-option" data-char="1" style="background: #e74c3c;">🐱</div>
+                        <div class="char-option" data-char="2" style="background: #2ecc71;">🦊</div>
+                        <div class="char-option" data-char="3" style="background: #f1c40f;">🐶</div>
+                    </div>
+                </div>
+                <div class="p-selection hidden" id="p2-selection">
+                    <h3>P2 选择角色</h3>
+                    <div class="char-list">
+                        <div class="char-option" data-char="0" style="background: #3498db;">🤖</div>
+                        <div class="char-option selected" data-char="1" style="background: #e74c3c;">🐱</div>
+                        <div class="char-option" data-char="2" style="background: #2ecc71;">🦊</div>
+                        <div class="char-option" data-char="3" style="background: #f1c40f;">🐶</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls-hint">
+                <p id="p1-controls">P1: WASD 移动，空格 动作 (地雷/火箭筒优先)</p>
+                <p id="p2-controls" class="hidden">P2: ↑↓←→ 移动，数字0 动作 (地雷/火箭筒优先)</p>
+            </div>
+            <button id="start-button">开始游戏</button>
+        </div>
+    </div>
+    <script src="game.js"></script>
+    <script src="ai.js"></script>
+</body>
+</html>

@@ -1,0 +1,471 @@
+:root {
+    --tile-size: 50px;
+    --grid-cols: 19;
+    --grid-rows: 15;
+    --bg-color: #2c3e50;
+    --wall-color: #2c3e50;
+    --hard-wall: #7f8c8d;
+    --soft-wall: #d35400;
+    --floor-color: #27ae60;
+    --player-color: #3498db;
+    --enemy-color: #e74c3c;
+    --bomb-color: #2c3e50;
+    --explosion-color: #f1c40f;
+}
+
+body {
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background-color: #1a1a1a;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: white;
+    overflow: hidden;
+}
+
+#game-container {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    padding: 20px;
+    background: #34495e;
+    border-radius: 10px;
+    box-shadow: 0 0 50px rgba(0,0,0,0.5);
+    max-width: 95vw;
+    max-height: 95vh;
+}
+
+.side-panel {
+    width: 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    height: 100%;
+}
+
+.status-card {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.status-card.dead {
+    opacity: 0.5;
+    filter: grayscale(1);
+}
+
+.status-card h4 {
+    margin: 0 0 8px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+}
+
+.status-items {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 5px;
+    font-size: 14px;
+}
+
+.item-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    transition: all 0.3s ease;
+}
+
+.item-row.active-weapon {
+    background: rgba(241, 196, 15, 0.3);
+    box-shadow: 0 0 10px rgba(241, 196, 15, 0.5);
+    border: 1px solid rgba(241, 196, 15, 0.5);
+    transform: scale(1.05);
+}
+
+#game-main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#ui-header {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+#ui-header h1 { margin: 0; font-size: 24px; color: #f1c40f; }
+
+.stats, .timer { font-size: 18px; font-weight: bold; }
+
+#game-board {
+    display: grid;
+    grid-template-columns: repeat(var(--grid-cols), var(--tile-size));
+    grid-template-rows: repeat(var(--grid-rows), var(--tile-size));
+    background-color: var(--floor-color);
+    border: 5px solid #2c3e50;
+    position: relative;
+}
+
+.cell {
+    width: var(--tile-size);
+    height: var(--tile-size);
+    box-sizing: border-box;
+}
+
+.wall-hard {
+    background-color: var(--hard-wall);
+    border: 2px solid #95a5a6;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+}
+
+.wall-soft {
+    background-color: var(--soft-wall);
+    border: 3px solid #e67e22;
+    border-radius: 4px;
+    background-image: linear-gradient(45deg, rgba(0,0,0,0.1) 25%, transparent 25%);
+    background-size: 10px 10px;
+}
+
+/* 角色样式 */
+.entity {
+    position: absolute;
+    width: calc(var(--tile-size) * 0.8);
+    height: calc(var(--tile-size) * 0.8);
+    transition: all 0.1s linear;
+    z-index: 10;
+    border-radius: 50%;
+    transform: translate(10%, 10%);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 24px;
+    transition: transform 0.1s linear, left 0.1s linear, top 0.1s linear;
+}
+
+/* 转向逻辑 */
+.entity[data-facing="up"] { transform: translate(10%, 10%) rotate(180deg); }
+.entity[data-facing="down"] { transform: translate(10%, 10%) rotate(0deg); }
+.entity[data-facing="left"] { transform: translate(10%, 10%) rotate(90deg); }
+.entity[data-facing="right"] { transform: translate(10%, 10%) rotate(-90deg); }
+
+.entity.color-blue { background-color: #3498db; border: 3px solid #2980b9; }
+.entity.color-red { background-color: #e74c3c; border: 3px solid #c0392b; }
+.entity.color-green { background-color: #2ecc71; border: 3px solid #27ae60; }
+.entity.color-yellow { background-color: #f1c40f; border: 3px solid #f39c12; }
+
+/* 移除旧的特定角色样式 */
+.enemy { background-color: #95a5a6; border: 3px solid #7f8c8d; }
+
+/* 炸弹样式 */
+.bomb {
+    position: absolute;
+    width: var(--tile-size);
+    height: var(--tile-size);
+    background-color: var(--bomb-color);
+    border-radius: 50%;
+    z-index: 5;
+    animation: pulse 0.5s infinite alternate;
+}
+
+.bomb::before {
+    content: '';
+    position: absolute;
+    top: -5px;
+    left: 50%;
+    width: 4px;
+    height: 10px;
+    background: #e67e22;
+    transform: translateX(-50%);
+}
+
+@keyframes pulse {
+    from { transform: scale(0.8); }
+    to { transform: scale(0.95); }
+}
+
+/* 爆炸样式 */
+.explosion {
+    position: absolute;
+    width: var(--tile-size);
+    height: var(--tile-size);
+    background-color: var(--explosion-color);
+    z-index: 15;
+    opacity: 0.8;
+    animation: explode-anim 0.4s forwards;
+}
+
+@keyframes explode-anim {
+    0% { transform: scale(0.1); opacity: 1; }
+    50% { transform: scale(1.1); opacity: 0.9; }
+    100% { transform: scale(1); opacity: 0; }
+}
+
+.explosion-bright {
+    background-color: #fff; /* 亮白色核心 */
+    box-shadow: 0 0 20px 10px #f1c40f, 0 0 40px 20px #e67e22;
+    z-index: 16;
+    opacity: 1;
+}
+
+.explosion-bright::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: radial-gradient(circle, #fff 0%, #f1c40f 50%, transparent 100%);
+    animation: explode-anim 0.4s forwards;
+}
+
+/* 道具样式 */
+.powerup {
+    position: absolute;
+    width: calc(var(--tile-size) * 0.7);
+    height: calc(var(--tile-size) * 0.7);
+    z-index: 8;
+    transform: translate(20%, 20%);
+    border-radius: 6px; /* 稍微圆润一点 */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 20px;
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    box-sizing: border-box; /* 确保 padding/border 不撑大盒子 */
+    overflow: hidden; /* 防止图标溢出 */
+    
+    /* 道具下方的阴影效果 */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3), 0 0 4px rgba(255, 255, 255, 0.1);
+    
+    /* 浮动动画 */
+    animation: powerup-float 1.5s infinite ease-in-out alternate;
+}
+
+@keyframes powerup-float {
+    0% { transform: translate(20%, 25%); filter: brightness(1); }
+    100% { transform: translate(20%, 15%); filter: brightness(1.2); }
+}
+
+.hit-flash {
+    animation: flash 0.2s 3;
+}
+
+@keyframes flash {
+    0%, 100% { opacity: 1; filter: none; }
+    50% { opacity: 0; filter: brightness(2); }
+}
+
+.powerup.range { background: #e67e22; }
+.powerup.speed { background: #9b59b6; }
+.powerup.bombCount { background: #34495e; }
+.powerup.landmine { background: #e74c3c; }
+.powerup.rocket { background: #2ecc71; }
+
+.powerup::after {
+    display: block;
+    line-height: 1;
+}
+
+.powerup.range::after { content: '🔥'; }
+.powerup.speed::after { content: '👟'; }
+.powerup.bombCount::after { content: '💣'; }
+.powerup.landmine::after { content: '🚩'; }
+.powerup.rocket::after { 
+    content: '🚀'; 
+    font-size: 18px; /* 恢复到 18px，现在背景框大小已统一 */
+}
+
+/* 地雷样式 */
+.landmine-placed {
+    position: absolute;
+    width: calc(var(--tile-size) * 0.6);
+    height: calc(var(--tile-size) * 0.6);
+    background-color: #e74c3c;
+    border: 2px solid #c0392b;
+    border-radius: 50%;
+    z-index: 4;
+    transform: translate(35%, 35%);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 14px;
+    animation: landmine-flash 0.5s infinite alternate;
+}
+
+@keyframes landmine-flash {
+    0% { transform: translate(35%, 35%) scale(1); filter: brightness(1); }
+    100% { transform: translate(35%, 35%) scale(1.1); filter: brightness(1.5); }
+}
+
+.landmine-placed::after {
+    content: '🚩'; /* 改为红旗，避免与炸弹混淆 */
+}
+
+.landmine-placed.hidden-mine {
+    opacity: 0; /* 隐藏地雷 */
+    animation: none; /* 隐形后停止闪烁 */
+}
+
+/* 调试用：让地雷半透明可见 */
+/* .landmine.hidden-mine { opacity: 0.3; } */
+
+/* 遮罩层 */
+#overlay, #start-screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.85);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    border-radius: 10px;
+}
+
+/* 开始界面增强 */
+#start-screen {
+    background: rgba(44, 62, 80, 0.95);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 30px;
+}
+
+.mode-selection {
+    margin: 20px 0;
+    display: flex;
+    gap: 15px;
+}
+
+.mode-btn {
+    padding: 10px 15px;
+    font-size: 16px;
+    background: #34495e;
+    color: white;
+    border: 2px solid #7f8c8d;
+    cursor: pointer;
+    border-radius: 5px;
+    transition: all 0.3s;
+    white-space: nowrap;
+}
+
+.mode-btn.selected {
+    background: #f1c40f;
+    color: #2c3e50;
+    border-color: white;
+    transform: scale(1.1);
+}
+
+.character-selection {
+    display: flex;
+    gap: 40px;
+    margin: 20px 0;
+}
+
+.p-selection h3 {
+    margin-bottom: 10px;
+    font-size: 16px;
+}
+
+.char-list {
+    display: flex;
+    gap: 10px;
+}
+
+.char-option {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    font-size: 20px;
+    border: 3px solid transparent;
+    transition: all 0.2s;
+}
+
+.char-option.selected {
+    border-color: white;
+    transform: scale(1.2);
+    box-shadow: 0 0 15px rgba(255,255,255,0.5);
+}
+
+.controls-hint {
+    margin: 15px 0;
+    font-size: 14px;
+    color: #bdc3c7;
+}
+
+.hidden { display: none !important; }
+
+.p-info {
+    padding: 5px 10px;
+    border-radius: 4px;
+    margin-right: 10px;
+    display: inline-block;
+}
+
+#p1-info { background: rgba(52, 152, 219, 0.3); border: 1px solid #3498db; }
+#p2-info { background: rgba(231, 76, 60, 0.3); border: 1px solid #e74c3c; }
+
+button {
+    padding: 12px 30px;
+    font-size: 20px;
+    background: #27ae60;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-top: 20px;
+    transition: background 0.3s;
+}
+
+button:hover { background: #2ecc71; }
+
+/* 火箭筒飞行物样式 */
+.rocket-projectile {
+    position: absolute;
+    width: var(--tile-size);
+    height: var(--tile-size);
+    z-index: 20;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 30px;
+    pointer-events: none;
+}
+
+/* 火箭筒轨迹 */
+.rocket-trail {
+    position: absolute;
+    width: calc(var(--tile-size) * 0.4);
+    height: calc(var(--tile-size) * 0.4);
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: 50%;
+    z-index: 18;
+    transform: translate(75%, 75%);
+    animation: trail-fade 0.5s forwards;
+    pointer-events: none;
+}
+
+@keyframes trail-fade {
+    0% { transform: translate(75%, 75%) scale(1); opacity: 0.6; }
+    100% { transform: translate(75%, 75%) scale(2); opacity: 0; }
+}
