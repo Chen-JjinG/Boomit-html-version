@@ -28,6 +28,7 @@ let gameState = {
     enemies: [],
     bombs: [],
     landmines: [],
+    rockets: [],
     powerUps: [],
     isGameOver: false,
     isStarted: false,
@@ -44,9 +45,9 @@ class PowerUp {
     constructor(x, y, type) {
         this.x = x;
         this.y = y;
-        this.type = type; // 'range', 'speed', 'bombCount', 'landmine', 'rocket'
+        this.type = type;
         this.element = document.createElement('div');
-        this.element.className = `powerup ${type}`;
+        this.element.className = `power-up ${type}`;
         this.element.style.left = `${x * CONFIG.tileSize}px`;
         this.element.style.top = `${y * CONFIG.tileSize}px`;
         board.appendChild(this.element);
@@ -54,7 +55,7 @@ class PowerUp {
 
     destroy() {
         if (this.element && this.element.parentNode) {
-            this.element.parentNode.removeChild(this.element);
+            board.removeChild(this.element);
         }
     }
 }
@@ -145,7 +146,7 @@ class Entity {
 
             // 测试模式：拾取后立即在原位刷新一个同类型道具
             if (gameState.isTestMode) {
-                setTimeout(() => {
+                this.pickupTimer = setTimeout(() => {
                     if (gameState.isStarted && !gameState.isGameOver) {
                         gameState.powerUps.push(new PowerUp(x, y, type));
                     }
@@ -253,7 +254,7 @@ class Entity {
             // 测试模式：角色/敌人不消失，闪烁并重置状态
             this.element.classList.add('hit-flash');
             
-            setTimeout(() => {
+            this.respawnTimer = setTimeout(() => {
                 this.element.classList.remove('hit-flash');
                 this.alive = true; // 1秒后复活
                 
@@ -269,6 +270,15 @@ class Entity {
             this.element.parentNode.removeChild(this.element);
         }
         this.alive = false;
+    }
+
+    destroy() {
+        this.alive = false;
+        if (this.respawnTimer) clearTimeout(this.respawnTimer);
+        if (this.pickupTimer) clearTimeout(this.pickupTimer);
+        if (this.element && this.element.parentNode) {
+            this.element.parentNode.removeChild(this.element);
+        }
     }
 }
 
@@ -313,7 +323,12 @@ class Bomb {
         this.element.style.top = `${y * CONFIG.tileSize}px`;
         board.appendChild(this.element);
 
-        setTimeout(() => this.explode(), CONFIG.bombTimer);
+        this.explodeTimer = setTimeout(() => this.explode(), CONFIG.bombTimer);
+    }
+
+    destroy() {
+        if (this.explodeTimer) clearTimeout(this.explodeTimer);
+        if (this.element && this.element.parentNode) board.removeChild(this.element);
     }
 
     explode() {
@@ -471,6 +486,11 @@ class Rocket {
         this.moveInterval = setInterval(() => this.move(), 100);
     }
 
+    destroy() {
+        if (this.moveInterval) clearInterval(this.moveInterval);
+        if (this.element && this.element.parentNode) board.removeChild(this.element);
+    }
+
     checkCollision(nx, ny) {
         // 1. 碰撞检测：墙壁
         if (nx < 0 || nx >= CONFIG.cols || ny < 0 || ny >= CONFIG.rows || gameState.grid[ny][nx] !== 'floor') {
@@ -570,9 +590,14 @@ class Landmine {
         board.appendChild(this.element);
 
         // 放置 1 秒后进入隐形状态
-        setTimeout(() => {
+        this.armTimer = setTimeout(() => {
             if (this.element) this.element.classList.add('hidden-mine');
         }, 1000);
+    }
+
+    destroy() {
+        if (this.armTimer) clearTimeout(this.armTimer);
+        if (this.element && this.element.parentNode) board.removeChild(this.element);
     }
 
     checkTrigger(entity) {
@@ -888,7 +913,30 @@ function start() {
         gameState.restartTimer = null;
     }
 
-    gameState.powerUps.forEach(p => p.destroy());
+    // 彻底销毁旧实体，清理定时器和 DOM
+    const entitiesToDestroy = [
+        ...(gameState.powerUps || []),
+        ...(gameState.bombs || []),
+        ...(gameState.landmines || []),
+        ...(gameState.rockets || []),
+        ...(gameState.enemies || []),
+        ...(gameState.players || [])
+    ];
+    entitiesToDestroy.forEach(entity => {
+        if (entity && typeof entity.destroy === 'function') {
+            entity.destroy();
+        }
+    });
+
+    // 清理可能残留的特效 DOM 元素（爆炸、火箭尾迹等）
+    if (board) {
+        const effects = board.querySelectorAll('.explosion, .explosion-bright, .rocket-trail');
+        effects.forEach(el => {
+            if (el && el.parentNode) el.parentNode.removeChild(el);
+        });
+    }
+
+    // 清空数组并确保初始化
     gameState.powerUps = [];
     gameState.bombs = [];
     gameState.landmines = [];

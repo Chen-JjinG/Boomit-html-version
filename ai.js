@@ -141,6 +141,17 @@ class SmartEnemy extends Entity {
         this.aiInterval = setInterval(() => this.think(), 300);
     }
 
+    /**
+     * 销毁 AI，清除定时器
+     */
+    destroy() {
+        if (this.aiInterval) {
+            clearInterval(this.aiInterval);
+            this.aiInterval = null;
+        }
+        super.destroy();
+    }
+
     // 检查在当前位置放置炸弹是否能炸到有意义的目标
     // type: 'wall' - 只检查软墙, 'target' - 只检查角色, 'any' - 检查两者
     isBombUseful(type = 'any') {
