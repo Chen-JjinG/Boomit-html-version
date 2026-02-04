@@ -76,54 +76,124 @@ class AIUtils {
     }
 
     /**
-     * 获取危险区域地图
-     * 0: 安全, 1: 危险 (在炸弹或地雷的爆炸范围内)
+     * 获取动态风险地图 (Risk Map)
+     * 0: 安全, 0.1-0.9: 潜在危险 (根据时间权重), 1.0+: 致命区域
      */
-    static getDangerMap(gameState, config, aiEntity = null) {
-        const dangerMap = Array.from({ length: config.rows }, () => Array(config.cols).fill(0));
+    static getRiskMap(gameState, config, aiEntity = null) {
+        const riskMap = Array.from({ length: config.rows }, () => Array(config.cols).fill(0));
+        const now = Date.now();
         
-        // 1. 标记炸弹爆炸范围
+        // 1. 标记炸弹风险
         gameState.bombs.forEach(bomb => {
-            dangerMap[bomb.y][bomb.x] = 1;
-            const dirs = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: 1, dy: 0}];
+            const timeLeft = Math.max(0, (bomb.placedTime + CONFIG.bombTimer) - now);
+            // 时间越近，风险权值越高 (从 0.5 到 1.0)
+            const riskWeight = 1.0 - (timeLeft / CONFIG.bombTimer) * 0.5;
             
-            dirs.forEach(d => {
-                for (let r = 1; r <= bomb.range; r++) {
-                    const nx = bomb.x + d.dx * r;
-                    const ny = bomb.y + d.dy * r;
-                    
-                    if (nx < 0 || nx >= config.cols || ny < 0 || ny >= config.rows) break;
-                    const cell = gameState.grid[ny][nx];
-                    if (cell === 'wall-hard') break;
-                    
-                    dangerMap[ny][nx] = 1;
-                    if (cell === 'wall-soft') break;
-                }
-            });
+            this._markArea(riskMap, bomb.x, bomb.y, bomb.range, riskWeight, gameState, config);
         });
 
-        // 2. 标记地雷位置
+        // 2. 标记地雷风险
         gameState.landmines.forEach(mine => {
             let isVisible = false;
             if (aiEntity) {
                 const isOwner = mine.owner === aiEntity;
                 const isFlashing = mine.element && !mine.element.classList.contains('hidden-mine');
-                // 困难 AI 具有“第六感”，能感知附近的地雷
-                const isHardAndNearby = aiEntity.difficulty === 'hard' && this.getDistance(aiEntity, mine) <= 2;
-                
-                if (isOwner || isFlashing || isHardAndNearby) {
-                    isVisible = true;
-                }
+                const isHardAndNearby = aiEntity.difficulty === 'hard' && this.getDistance(aiEntity, mine) <= 3;
+                if (isOwner || isFlashing || isHardAndNearby) isVisible = true;
             } else {
                 isVisible = mine.element && !mine.element.classList.contains('hidden-mine');
             }
 
             if (isVisible) {
-                dangerMap[mine.y][mine.x] = 1;
+                riskMap[mine.y][mine.x] = 1.0;
             }
         });
         
-        return dangerMap;
+        return riskMap;
+    }
+
+    /**
+     * 获取影响图 (Influence Map)
+     * 正值代表吸引力（道具、被困敌人），负值代表排斥力（敌人威胁区）
+     */
+    static getInfluenceMap(gameState, config, aiEntity) {
+        const influenceMap = Array.from({ length: config.rows }, () => Array(config.cols).fill(0));
+        
+        // 1. 道具吸引力
+        gameState.powerUps.forEach(pu => {
+            this._applyRadialInfluence(influenceMap, pu.x, pu.y, 5, 2.0, config);
+        });
+
+        // 2. 敌人位置及威胁
+        const enemies = [...gameState.players, ...gameState.enemies].filter(e => e !== aiEntity && e.alive);
+        enemies.forEach(e => {
+            // 靠近敌人有进攻价值（吸引）
+            this._applyRadialInfluence(influenceMap, e.x, e.y, 4, 1.5, config);
+            
+            // 敌人面对的直线区域有威胁（排斥，特别是敌人有火箭筒时）
+            if (e.activeWeapon === 'rocket') {
+                this._applyLinearInfluence(influenceMap, e.x, e.y, e.facing, 8, -3.0, config);
+            }
+        });
+
+        return influenceMap;
+    }
+
+    /**
+     * 辅助方法：在地图上标记范围风险
+     */
+    static _markArea(map, x, y, range, weight, gameState, config) {
+        map[y][x] = Math.max(map[y][x], weight);
+        const dirs = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: 1, dy: 0}];
+        dirs.forEach(d => {
+            for (let r = 1; r <= range; r++) {
+                const nx = x + d.dx * r;
+                const ny = y + d.dy * r;
+                if (nx < 0 || nx >= config.cols || ny < 0 || ny >= config.rows) break;
+                const cell = gameState.grid[ny][nx];
+                if (cell === 'wall-hard') break;
+                map[ny][nx] = Math.max(map[ny][nx], weight);
+                if (cell === 'wall-soft') break;
+            }
+        });
+    }
+
+    /**
+     * 辅助方法：施加径向影响（衰减）
+     */
+    static _applyRadialInfluence(map, cx, cy, radius, strength, config) {
+        for (let y = Math.max(0, cy - radius); y <= Math.min(config.rows - 1, cy + radius); y++) {
+            for (let x = Math.max(0, cx - radius); x <= Math.min(config.cols - 1, cx + radius); x++) {
+                const dist = Math.abs(x - cx) + Math.abs(y - cy);
+                if (dist <= radius) {
+                    map[y][x] += strength * (1 - dist / radius);
+                }
+            }
+        }
+    }
+
+    /**
+     * 辅助方法：施加直线影响
+     */
+    static _applyLinearInfluence(map, x, y, facing, length, strength, config) {
+        const dirMap = { 'up': {dx:0, dy:-1}, 'down': {dx:0, dy:1}, 'left': {dx:-1, dy:0}, 'right': {dx:1, dy:0} };
+        const d = dirMap[facing];
+        if (!d) return;
+        for (let i = 1; i <= length; i++) {
+            const nx = x + d.dx * i;
+            const ny = y + d.dy * i;
+            if (nx < 0 || nx >= config.cols || ny < 0 || ny >= config.rows) break;
+            map[ny][nx] += strength * (1 - i / length);
+        }
+    }
+
+    /**
+     * 获取危险区域地图 (保留原接口兼容性，但内部升级)
+     */
+    static getDangerMap(gameState, config, aiEntity = null) {
+        const riskMap = this.getRiskMap(gameState, config, aiEntity);
+        // 将风险地图简化为 0/1 以兼容旧逻辑
+        return riskMap.map(row => row.map(v => v >= 0.8 ? 1 : 0));
     }
 
     /**
@@ -146,21 +216,9 @@ class AIUtils {
 
         if (!isTargetFunc && startX === target.x && startY === target.y) return [];
 
-        // 尝试从缓存获取
-        let cacheKey = null;
-        if (!isTargetFunc) {
-            const dist = this.getDistance(start, target);
-            if (dist <= this.CACHE_MAX_DIST) {
-                cacheKey = `${startX},${startY}-${target.x},${target.y}-${avoidDanger}-${includeSoftWalls}-${aiEntity ? aiEntity.id : 'none'}`;
-                const cached = this.pathCache.get(cacheKey);
-                if (cached && Date.now() - cached.time < this.CACHE_TTL) {
-                    return cached.path;
-                }
-            }
-        }
-
         const config = CONFIG;
-        const dangerMap = avoidDanger ? this.getDangerMap(gameState, config, aiEntity) : null;
+        // 升级：使用风险地图进行路径代价评估
+        const riskMap = avoidDanger ? this.getRiskMap(gameState, config, aiEntity) : null;
         
         const pq = new PriorityQueue((a, b) => (a.g + a.h) < (b.g + b.h));
         pq.push({ x: startX, y: startY, g: 0, h: 0, parent: null });
@@ -174,19 +232,13 @@ class AIUtils {
             const currentKey = `${current.x},${current.y}`;
             
             if (isTarget(current.x, current.y)) {
-                // 找到路径，回溯生成结果
                 const path = [];
                 let temp = current;
                 while (temp.parent) {
                     path.push({ x: temp.x, y: temp.y, dx: temp.x - temp.parent.x, dy: temp.y - temp.parent.y, type: temp.type });
                     temp = temp.parent;
                 }
-                const result = path.reverse();
-                
-                if (cacheKey) {
-                    this.pathCache.set(cacheKey, { path: result, time: Date.now() });
-                }
-                return result;
+                return path.reverse();
             }
             
             closedList.add(currentKey);
@@ -208,14 +260,20 @@ class AIUtils {
 
                 if (cell === 'wall-soft') {
                     if (!includeSoftWalls) continue;
-                    moveCost = 10; // 软墙通行代价极高，迫使 AI 优先走空地
+                    moveCost = 15; // 提高软墙代价
                     cellType = 'wall-soft';
                 }
 
                 // 避开炸弹本身
                 if (gameState.bombs.some(b => b.x === nx && b.y === ny)) continue;
-                // 避开危险区域
-                if (avoidDanger && dangerMap[ny][nx] > 0) continue;
+                
+                // 避开致命风险 (risk >= 0.8)
+                if (avoidDanger && riskMap && riskMap[ny][nx] >= 0.8) continue;
+                
+                // 动态代价：经过有风险的区域会增加路径代价
+                if (avoidDanger && riskMap && riskMap[ny][nx] > 0) {
+                    moveCost += riskMap[ny][nx] * 10;
+                }
                 
                 const g = current.g + moveCost;
                 const h = isTargetFunc ? 0 : Math.abs(nx - target.x) + Math.abs(ny - target.y);

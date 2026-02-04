@@ -162,13 +162,15 @@ class Entity {
                 this.maxBombs++;
                 break;
             case 'landmine':
-                this.landmines = (this.landmines || 0) + 1;
-                this.rockets = 0; // 切换武器
+                // 统一道具规则：捡到新攻击道具直接替换，不叠加，用完变回炸弹
+                this.landmines = 1; 
+                this.rockets = 0; 
                 this.activeWeapon = 'landmine';
                 break;
             case 'rocket':
-                this.rockets = (this.rockets || 0) + 2;
-                this.landmines = 0; // 切换武器
+                // 统一道具规则：捡到新攻击道具直接替换，不叠加，用完变回炸弹
+                this.rockets = 2;
+                this.landmines = 0;
                 this.activeWeapon = 'rocket';
                 break;
         }
@@ -1000,19 +1002,30 @@ class SmartEnemy extends Entity {
             // 尝试“围堵”和“连招”
             if (this.isTargetTrapped(predictedTarget)) {
                 if (this.canPlaceBombSafely()) {
+                    // 执行当前选定的武器动作（遵循道具消耗规则）
                     this.performAction();
-                    // 连招：放完炸弹如果还有火箭筒，往逃生方向射一发
-                    if (this.activeWeapon === 'rocket' && this.rockets > 0) {
-                        setTimeout(() => {
-                            if (this.alive) this.performAction();
-                        }, 100);
+                    
+                    // 困难 AI 连招优化：
+                    // 如果还有炸弹额度，且目标被困，尝试在附近再放一个，彻底封死
+                    // 注意：这里只有在当前武器是普通炸弹时才会连放炸弹，
+                    // 否则会消耗特殊武器。为了公平，AI 必须等待特殊武器用完或符合规则地使用。
+                    if (this.activeWeapon === 'bomb' && this.activeBombs < this.maxBombs && Math.random() < 0.5) {
+                        const neighbors = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: 1, dy: 0}];
+                        for (const d of neighbors) {
+                            const nx = this.x + d.dx;
+                            const ny = this.y + d.dy;
+                            if (this.canMoveTo(nx, ny) && this.canPlaceBombSafely()) {
+                                this.executeMove(d.dx, d.dy);
+                                return;
+                            }
+                        }
                     }
                     return;
                 }
             }
 
             if (Math.random() < attackChance) {
-                // 火箭筒攻击
+                // 根据当前激活的武器执行进攻逻辑
                 if (this.activeWeapon === 'rocket' && this.rockets > 0) {
                     if ((this.x === predictedTarget.x || this.y === predictedTarget.y) && 
                         this.hasClearShot(predictedTarget.x, predictedTarget.y)) {
@@ -1020,7 +1033,6 @@ class SmartEnemy extends Entity {
                         return;
                     }
                 } 
-                // 地雷伏击
                 else if (this.activeWeapon === 'landmine' && this.landmines > 0) {
                     if (AIUtils.getDistance(this, predictedTarget) <= 2) {
                         this.performAction();
@@ -1028,7 +1040,6 @@ class SmartEnemy extends Entity {
                         return;
                     }
                 } 
-                // 普通炸弹攻击
                 else if (this.activeWeapon === 'bomb') {
                     const inRange = (this.x === predictedTarget.x && Math.abs(this.y - predictedTarget.y) <= this.explosionRange) ||
                                   (this.y === predictedTarget.y && Math.abs(this.x - predictedTarget.x) <= this.explosionRange);
@@ -1169,6 +1180,15 @@ class SmartEnemy extends Entity {
         
         // 检查是否存在逃向安全区域的路径
         const safePath = AIUtils.findPath(this, (x, y) => futureDangerMap[y][x] === 0, tempGameState, false, false, this);
-        return safePath !== null;
+        
+        if (!safePath) return false;
+
+        // 估算逃生所需时间 (步数 * 移动冷却)
+        // 增加安全余量，防止因为转向或卡顿导致逃生失败
+        // 困难难度 AI 会更加谨慎地评估路径长度
+        const escapeTime = safePath.length * this.moveCooldown;
+        const safetyBuffer = this.difficulty === 'hard' ? 1000 : 600; 
+        
+        return escapeTime < (CONFIG.bombTimer - safetyBuffer);
     }
 }
