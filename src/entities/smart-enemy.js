@@ -25,10 +25,9 @@ class SmartEnemy extends Entity {
      * 根据当前移动冷却时间动态更新思考频率
      */
     updateThinkInterval() {
-        // 思考频率应略快于移动频率，以保证响应灵敏
-        // 比例：困难 0.75x, 普通 1.5x, 简单 3x
-        const ratio = this.difficulty === 'hard' ? 0.75 : (this.difficulty === 'easy' ? 3.0 : 1.5);
-        const newInterval = Math.max(50, Math.floor(this.moveCooldown * ratio));
+        // 显著提升思考频率，让 AI 反应更敏捷
+        // 困难/普通模式下统一为极速思考（50-80ms），简单模式略慢
+        const newInterval = this.difficulty === 'hard' ? 50 : (this.difficulty === 'normal' ? 80 : 200);
         
         if (this.thinkInterval !== newInterval) {
             this.thinkInterval = newInterval;
@@ -186,8 +185,10 @@ class SmartEnemy extends Entity {
     think() {
         if (!this.alive || gameState.isTestMode) return;
         const now = Date.now();
-        if (now - this.lastMoveTime < this.moveCooldown) return;
-
+        
+        // 只有移动需要检查 moveCooldown，攻击动作可以有更独立的响应节奏
+        // 将冷却检查下移到具体的移动逻辑中，让 AI 即使在等待移动时也能实时“思考”逃生路径或攻击机会
+        
         // 核心安全验证：即使在思考逻辑之外，也强制检查当前格在时间轴上的绝对安全性
         if (this.difficulty === 'hard') {
             const timeDangerMap = AIUtils.getTimeDangerMap(gameState, CONFIG);
@@ -222,16 +223,17 @@ class SmartEnemy extends Entity {
      */
     thinkEasy() {
         const dangerMap = AIUtils.getDangerMap(gameState, CONFIG, this);
+        const now = Date.now();
+        const canMove = now - this.lastMoveTime >= this.moveCooldown;
+
         if (dangerMap[this.y][this.x] > 0) {
             this.escape(dangerMap);
             return;
         }
 
-        // 非必要不移动：如果当前位置安全，则以较低概率游走，保持灵活性
+        // 非必要不移动
         if (dangerMap[this.y][this.x] === 0) {
-            if (Math.random() > 0.2) {
-                return;
-            }
+            if (Math.random() > 0.1) return;
         }
 
         // 较低概率尝试拆墙
@@ -241,7 +243,9 @@ class SmartEnemy extends Entity {
         }
 
         // 主要是随机移动
-        this.randomMove(dangerMap);
+        if (canMove) {
+            this.randomMove(dangerMap);
+        }
     }
 
     /**
@@ -249,8 +253,10 @@ class SmartEnemy extends Entity {
      */
     thinkNormal() {
         const riskMap = AIUtils.getRiskMap(gameState, CONFIG, this);
+        const now = Date.now();
+        const canMove = now - this.lastMoveTime >= this.moveCooldown;
         
-        // 1. 紧急避险
+        // 1. 紧急避险 (最高优先级，不受冷却限制思考，但受限制移动)
         if (riskMap[this.y][this.x] > 0.4) {
             this.currentTargetPath = null;
             this.escape(riskMap);
@@ -259,13 +265,18 @@ class SmartEnemy extends Entity {
 
         // 2. 路径保持逻辑 (防止抽风)
         if (this.currentTargetPath && this.currentTargetPath.length > 0) {
-            const nextStep = this.currentTargetPath.shift();
-            if (this.canMoveTo(this.x + nextStep.dx, this.y + nextStep.dy) && 
-                riskMap[this.y + nextStep.dy][this.x + nextStep.dx] < 0.3) {
-                this.executeMove(nextStep.dx, nextStep.dy);
+            if (canMove) {
+                const nextStep = this.currentTargetPath.shift();
+                if (this.canMoveTo(this.x + nextStep.dx, this.y + nextStep.dy) && 
+                    riskMap[this.y + nextStep.dy][this.x + nextStep.dx] < 0.3) {
+                    this.executeMove(nextStep.dx, nextStep.dy);
+                    return;
+                }
+                this.currentTargetPath = null;
+            } else {
+                // 等待冷却，不执行后续逻辑，保持路径
                 return;
             }
-            this.currentTargetPath = null;
         }
 
         // 3. 寻找最近目标
@@ -298,19 +309,25 @@ class SmartEnemy extends Entity {
                 const inRange = (this.x === predictedTarget.x && Math.abs(this.y - predictedTarget.y) <= this.explosionRange) ||
                               (this.y === predictedTarget.y && Math.abs(this.x - predictedTarget.x) <= this.explosionRange);
                 
-                if (inRange && this.isBombUseful('target')) {
+                // 多炸弹限制
+                const multiBombThrottling = this.activeBombs > 0 ? 0.4 : 1.0;
+                if (inRange && this.isBombUseful('target') && Math.random() < multiBombThrottling) {
                     this.performAction();
                     return;
                 }
             }
 
             // 移动向目标
-            const path = AIUtils.findPath(this, predictedTarget, gameState, true, false, this);
-            if (path && path.length > 0) {
-                this.currentTargetPath = path;
-                const step = this.currentTargetPath.shift();
-                this.executeMove(step.dx, step.dy);
-                return;
+            if (canMove) {
+                const path = AIUtils.findPath(this, predictedTarget, gameState, true, false, this);
+                if (path && path.length > 0) {
+                    this.currentTargetPath = path;
+                    const step = this.currentTargetPath.shift();
+                    this.executeMove(step.dx, step.dy);
+                    return;
+                }
+            } else {
+                return; // 等待冷却
             }
         }
 
@@ -324,20 +341,26 @@ class SmartEnemy extends Entity {
                     return;
                 }
             } else if (canPlaceBomb) {
-                this.performAction();
-                return;
+                // 拆墙时的多炸弹限制
+                const wallThrottling = this.activeBombs > 0 ? 0.1 : 1.0;
+                if (Math.random() < wallThrottling) {
+                    this.performAction();
+                    return;
+                }
             }
         }
 
         // 5. 随机安全移动
         if (riskMap[this.y][this.x] === 0) {
             // 在普通模式下，如果当前位置已经安全，且没有紧迫的进攻目标或拆墙需求，则原地待命
-            // 提高游走概率到 20%，防止完全不动
             if (Math.random() > 0.2) {
                 return;
             }
         }
-        this.randomMove(riskMap);
+        
+        if (canMove) {
+            this.randomMove(riskMap);
+        }
     }
 
     /**
@@ -356,19 +379,25 @@ class SmartEnemy extends Entity {
 
         // 2. 路径锁定逻辑：如果已经有目标路径且目的地仍然绝对安全，则继续执行
         if (this.currentTargetPath && this.currentTargetPath.length > 0) {
-            const targetPos = this.currentTargetPath[this.currentTargetPath.length - 1].target;
-            // 目的地必须绝对安全 (risk === 0)
-            if (targetPos && riskMap[targetPos.y][targetPos.x] === 0) {
-                const nextStep = this.currentTargetPath.shift();
-                if (this.canMoveTo(this.x + nextStep.dx, this.y + nextStep.dy)) {
-                    // 下一步也必须绝对安全
-                    if (riskMap[this.y + nextStep.dy][this.x + nextStep.dx] === 0) {
-                        this.executeMove(nextStep.dx, nextStep.dy);
-                        return;
+            const now = Date.now();
+            if (now - this.lastMoveTime >= this.moveCooldown) {
+                const targetPos = this.currentTargetPath[this.currentTargetPath.length - 1].target;
+                // 目的地必须绝对安全 (risk === 0)
+                if (targetPos && riskMap[targetPos.y][targetPos.x] === 0) {
+                    const nextStep = this.currentTargetPath.shift();
+                    if (this.canMoveTo(this.x + nextStep.dx, this.y + nextStep.dy)) {
+                        // 下一步也必须绝对安全
+                        if (riskMap[this.y + nextStep.dy][this.x + nextStep.dx] === 0) {
+                            this.executeMove(nextStep.dx, nextStep.dy);
+                            return;
+                        }
                     }
                 }
+                this.currentTargetPath = null;
+            } else {
+                // 虽然在冷却，但我们不返回，继续执行后面的攻击判定
+                // 这样 AI 即使在等待移动时也能发射火箭或放置地雷
             }
-            this.currentTargetPath = null;
         }
 
         // 3. 获取影响图，寻找全局最优战略点
@@ -465,7 +494,9 @@ class SmartEnemy extends Entity {
             // 炸弹常规进攻
             if (this.activeWeapon === 'bomb') {
                 const attackChance = this.personality === 'aggressive' ? 0.95 : 0.8;
-                if (Math.random() < attackChance) {
+                // 如果已有炸弹，显著降低进攻欲望，优先保证生存
+                const multiBombThrottling = this.activeBombs > 0 ? 0.3 : 1.0;
+                if (Math.random() < attackChance * multiBombThrottling) {
                     const inRange = (this.x === predictedTarget.x && Math.abs(this.y - predictedTarget.y) <= this.explosionRange) ||
                                   (this.y === predictedTarget.y && Math.abs(this.x - predictedTarget.x) <= this.explosionRange);
                     
@@ -479,17 +510,23 @@ class SmartEnemy extends Entity {
 
         // 5. 移动向战略点
         if (bestPos && (bestPos.x !== this.x || bestPos.y !== this.y)) {
-            // 降低切换阈值，0.15 既能过滤微小抖动，又不至于让 AI 反应迟钝
-            if (bestScore > (currentPosScore + 0.15)) {
-                const path = AIUtils.findPath(this, bestPos, gameState, true, false, this);
-                if (path && path.length > 0) {
-                    // 将目的地信息存入路径中以便追踪
-                    const pathWithTarget = path.map(step => ({ ...step, target: bestPos }));
-                    this.currentTargetPath = pathWithTarget;
-                    const nextStep = this.currentTargetPath.shift();
-                    this.executeMove(nextStep.dx, nextStep.dy);
-                    return;
+            const now = Date.now();
+            if (now - this.lastMoveTime >= this.moveCooldown) {
+                // 降低切换阈值，0.15 既能过滤微小抖动，又不至于让 AI 反应迟钝
+                if (bestScore > (currentPosScore + 0.15)) {
+                    const path = AIUtils.findPath(this, bestPos, gameState, true, false, this);
+                    if (path && path.length > 0) {
+                        // 将目的地信息存入路径中以便追踪
+                        const pathWithTarget = path.map(step => ({ ...step, target: bestPos }));
+                        this.currentTargetPath = pathWithTarget;
+                        const nextStep = this.currentTargetPath.shift();
+                        this.executeMove(nextStep.dx, nextStep.dy);
+                        return;
+                    }
                 }
+            } else {
+                // 冷却中，不执行后续逻辑，保持当前移动意图
+                return;
             }
         }
 
@@ -505,8 +542,12 @@ class SmartEnemy extends Entity {
                     return;
                 }
             } else if (canPlaceBomb) {
-                this.performAction();
-                return;
+                // 已有炸弹时，极低概率为了拆墙放炸弹，防止被自己炸死
+                const wallDestructionThrottling = this.activeBombs > 0 ? 0.1 : 1.0;
+                if (Math.random() < wallDestructionThrottling) {
+                    this.performAction();
+                    return;
+                }
             }
         }
 
@@ -648,9 +689,15 @@ class SmartEnemy extends Entity {
      * 执行移动并更新冷却计时
      */
     executeMove(dx, dy) {
+        const now = Date.now();
+        // 强制执行移动冷却检查
+        if (now - this.lastMoveTime < this.moveCooldown) return false;
+        
         if (this.move(dx, dy)) {
-            this.lastMoveTime = Date.now();
+            this.lastMoveTime = now;
+            return true;
         }
+        return false;
     }
 
     /**
@@ -662,7 +709,6 @@ class SmartEnemy extends Entity {
         
         const now = Date.now();
         // 关键点：考虑当前移动冷却的剩余时间
-        // 如果刚刚移动过，下一步必须等待 cooldown 结束
         const timeSinceLastMove = now - this.lastMoveTime;
         const remainingCooldown = Math.max(0, this.moveCooldown - timeSinceLastMove);
         
@@ -678,28 +724,24 @@ class SmartEnemy extends Entity {
         
         // 1. 静态风险检查：是否存在逃向安全区域（风险为 0）的路径
         const futureDangerMap = AIUtils.getDangerMap(tempGameState, CONFIG, this);
+        // 寻找一个绝对安全的落脚点
         const safePath = AIUtils.findPath(this, (x, y) => futureDangerMap[y][x] === 0, tempGameState, false, false, this);
         
-        if (!safePath) return false;
+        if (!safePath || safePath.length === 0) return false;
 
         // 2. 动态时间轴检查：验证逃生路径上的每一步在到达时是否安全
         for (let i = 0; i < safePath.length; i++) {
             const step = safePath[i];
-            // 到达时间 = 现在 + 冷却剩余时间 + (步数 * 冷却时间) + 决策补偿
             const arrivalTime = now + remainingCooldown + (i + 1) * this.moveCooldown + 150;
             
             for (const b of tempBombs) {
                 const explodeTime = b.placedTime + CONFIG.bombTimer;
                 const explodeEndTime = explodeTime + (CONFIG.explosionDuration || 1000);
                 
-                // 增加 400ms 的大幅安全缓冲
-                const safetyBuffer = 400;
+                const safetyBuffer = 450; // 增加安全缓冲
                 if (arrivalTime + safetyBuffer >= explodeTime && arrivalTime <= explodeEndTime + safetyBuffer) {
-                    // 检查爆炸范围
-                    const inX = b.x === step.x && Math.abs(b.y - step.y) <= b.range;
-                    const inY = b.y === step.y && Math.abs(b.x - step.x) <= b.range;
-                    if (inX || inY) {
-                        // 检查是否有墙阻挡爆炸
+                    if (b.x === step.x && Math.abs(b.y - step.y) <= b.range || 
+                        b.y === step.y && Math.abs(b.x - step.x) <= b.range) {
                         if (!this._isExplosionBlocked(b, step.x, step.y)) {
                             return false; 
                         }
@@ -708,18 +750,18 @@ class SmartEnemy extends Entity {
             }
         }
 
-        // 3. 估算总逃生时间并增加安全余量
+        // 3. 针对多炸弹情况的额外限制
+        // 如果已经有炸弹在场，逃生冗余必须更大，防止多个炸弹封死所有出口
+        const multiBombPenalty = this.activeBombs > 0 ? 800 : 0;
         const totalEscapeTime = remainingCooldown + safePath.length * this.moveCooldown;
-        
-        // 增加开局保护：游戏开始前 30 秒，额外增加安全余量，防止在狭窄区域急于拆墙而自杀
         const gameTime = Date.now() - (gameState.startTime || Date.now());
         const earlyGameBuffer = gameTime < 30000 ? 500 : 0;
         
-        const safetyBuffer = (this.difficulty === 'hard' ? 1000 : 600) + earlyGameBuffer; 
+        const safetyBuffer = (this.difficulty === 'hard' ? 1200 : 800) + earlyGameBuffer + multiBombPenalty; 
         
         if (totalEscapeTime >= (CONFIG.bombTimer - safetyBuffer)) return false;
 
-        // 4. 同伴陷阱检查：确保放置炸弹不会把队友坑死
+        // 4. 同伴陷阱检查
         if (this.wouldTrapTeammate(simulatedBomb)) return false;
 
         return true;

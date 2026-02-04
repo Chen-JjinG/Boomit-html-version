@@ -77,7 +77,7 @@ class AIUtils {
 
     /**
      * 获取时间维度的危险图
-     * 返回一个 2D 数组，每个格子包含该位置所有炸弹的爆炸时间窗口 [{start, end}]
+     * 返回一个 2D 数组，每个格子包含该位置所有炸弹的爆炸时间窗口 [{start, end, ownerId}]
      */
     static getTimeDangerMap(gameState, config) {
         const timeMap = Array.from({ length: config.rows }, () => 
@@ -85,14 +85,15 @@ class AIUtils {
         );
         const now = Date.now();
 
+        // 记录所有即将发生的爆炸
         gameState.bombs.forEach(bomb => {
             const explodeTime = (bomb.placedTime || now) + config.bombTimer;
             const explodeEndTime = explodeTime + (config.explosionDuration || 1000);
+            const ownerId = bomb.owner ? bomb.owner.id : null;
             
-            // 标记爆炸中心和四个方向
             const mark = (x, y) => {
                 if (x >= 0 && x < config.cols && y >= 0 && y < config.rows) {
-                    timeMap[y][x].push({ start: explodeTime, end: explodeEndTime });
+                    timeMap[y][x].push({ start: explodeTime, end: explodeEndTime, ownerId });
                     return true;
                 }
                 return false;
@@ -112,6 +113,33 @@ class AIUtils {
                 }
             });
         });
+
+        // 新增：考虑火箭弹的动态路径危险（火箭弹飞行路径上的格子在短时间内也是危险的）
+        if (gameState.rockets) {
+            gameState.rockets.forEach(rocket => {
+                const speed = rocket.speed || 5; // 假设速度
+                const travelTimePerCell = 1000 / speed;
+                const startTime = now;
+                
+                // 简化预测：预测未来 5 格的路径
+                for (let i = 1; i <= 5; i++) {
+                    const nx = rocket.x + rocket.dx * i;
+                    const ny = rocket.y + rocket.dy * i;
+                    if (nx < 0 || nx >= config.cols || ny < 0 || ny >= config.rows) break;
+                    if (gameState.grid[ny][nx] === 'wall-hard') break;
+                    
+                    const arrivalTime = startTime + i * travelTimePerCell;
+                    timeMap[ny][nx].push({ 
+                        start: arrivalTime - 100, 
+                        end: arrivalTime + 500,
+                        ownerId: rocket.owner ? rocket.owner.id : null,
+                        isProjectile: true
+                    });
+                    
+                    if (gameState.grid[ny][nx] === 'wall-soft') break;
+                }
+            });
+        }
 
         return timeMap;
     }
@@ -371,16 +399,22 @@ class AIUtils {
                 if (cellType === 'wall-hard') continue;
                 if (cellType === 'wall-soft' && !includeSoftWalls) continue;
                 
-                // 检查实体阻挡（排除起点和终点）
-                const hasEntity = [...gameState.players, ...gameState.enemies].some(e => 
+                // 检查实体阻挡
+                const otherEntities = [...gameState.players, ...gameState.enemies].filter(e => 
                     e.alive && e !== aiEntity && e.x === nx && e.y === ny
                 );
+                const hasEntity = otherEntities.length > 0;
                 
                 let moveCost = 1;
                 if (cellType === 'wall-soft') moveCost = 10;
                 
-                // 改进：实体不再是硬阻挡，而是高代价路径，防止 AI 因为队友临时挡路而误判为死路
-                if (hasEntity) moveCost += 5;
+                // 改进：AI vs AI 模式下，实体阻塞是自杀的主因之一
+                // 我们不再将实体视为简单的高代价路径，而是根据实体的状态动态计算代价
+                if (hasEntity) {
+                    // 如果对方也是 AI，且正在移动，代价略高但可接受
+                    // 如果对方站着不动，可能是在“尬站”或者等待，代价极高以避免互相卡死
+                    moveCost += 15; 
+                }
                 
                 // --- 核心改进：时间轴安全性检查（增加安全冗余） ---
                 if (avoidDanger && timeDangerMap) {
@@ -389,10 +423,14 @@ class AIUtils {
                     let isFatal = false;
                     
                     for (const window of dangerWindows) {
-                        // 增加 350ms 的安全冗余缓冲 (之前是 100ms)
-                        // 这包含了：网络抖动容错、渲染帧率波动以及 AI 转向耗时
-                        const safetyBuffer = 350;
+                        // 增加安全冗余缓冲
+                        // 在多 AI 模式下，由于互相卡位的风险，我们需要更大的缓冲
+                        const isMultiAI = [...gameState.players, ...gameState.enemies].filter(e => e.alive).length > 2;
+                        const safetyBuffer = isMultiAI ? 500 : 350; 
+                        
                         if (arrivalTime + safetyBuffer >= window.start && arrivalTime <= window.end + safetyBuffer) {
+                            // 特殊处理：如果是自己放的炸弹，且当前没有其他逃生选择，权重稍微降低（但不代表安全）
+                            // 但如果是别人放的炸弹，必须绝对避开
                             isFatal = true;
                             break;
                         }
