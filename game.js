@@ -1052,11 +1052,14 @@ function start() {
 
     if (gameState.isTestMode) {
         // 测试模式：放置一个靶子 AI 在角色正前方
+        // 尝试选择一个不同于玩家的角色图标
+        const playerChar = gameState.selectedChars[0];
+        let enemyChar = (playerChar + 1) % CHAR_ICONS.length;
         gameState.enemies = [
-            new SmartEnemy(p1X, p1Y + 1, 1, 1, gameState.difficulty, 'balanced')
+            new SmartEnemy(p1X, p1Y + 1, 1, enemyChar, gameState.difficulty, 'balanced')
         ];
     } else if (gameState.mode === 'ai-vs-ai') {
-        // AI 互博模式：四个角落各一个 AI
+        // AI 互博模式：四个角落各一个 AI，使用四个不同的角色
         gameState.enemies = [
             new SmartEnemy(1, 1, 1, 0, gameState.difficulty, 'aggressive'),
             new SmartEnemy(CONFIG.cols - 2, 1, 2, 1, gameState.difficulty, 'conservative'),
@@ -1064,13 +1067,26 @@ function start() {
             new SmartEnemy(CONFIG.cols - 2, CONFIG.rows - 2, 4, 3, gameState.difficulty, 'balanced')
         ];
     } else {
-        // 单人/双人模式：根据难度随机分配性格
+        // 单人/双人模式：根据难度随机分配性格，且角色不与玩家重复
         gameState.enemies = [];
         const corners = [
             {x: CONFIG.cols - 2, y: 1},
             {x: 1, y: CONFIG.rows - 2},
             {x: CONFIG.cols - 2, y: CONFIG.rows - 2}
         ];
+        
+        // 获取所有已被占用的角色索引
+        const occupiedChars = gameState.mode === 'multi' ? 
+            [gameState.selectedChars[0], gameState.selectedChars[1]] : 
+            [gameState.selectedChars[0]];
+            
+        // 获取可用角色索引池
+        const availableChars = [];
+        for (let i = 0; i < CHAR_ICONS.length; i++) {
+            if (!occupiedChars.includes(i)) {
+                availableChars.push(i);
+            }
+        }
         
         // 确保 P2 的位置不被敌人占据（双人模式）
         const enemyCorners = corners.filter(c => 
@@ -1079,7 +1095,12 @@ function start() {
 
         enemyCorners.forEach((pos, i) => {
             const personality = AI_PERSONALITIES[Math.floor(Math.random() * AI_PERSONALITIES.length)];
-            gameState.enemies.push(new SmartEnemy(pos.x, pos.y, i + 1, i + 1, gameState.difficulty, personality));
+            // 从可用池中取一个角色，如果池空了（极端情况）则随机
+            const charIndex = availableChars.length > 0 ? 
+                availableChars.splice(Math.floor(Math.random() * availableChars.length), 1)[0] : 
+                Math.floor(Math.random() * CHAR_ICONS.length);
+                
+            gameState.enemies.push(new SmartEnemy(pos.x, pos.y, i + 1, charIndex, gameState.difficulty, personality));
         });
     }
     
