@@ -35,8 +35,11 @@ let gameState = {
     isTestMode: false,
     keys: {},
     mode: 'single', // 'single', 'multi', 'test'
-    selectedChars: [0, 1] // P1 和 P2 选择的角色索引
+    selectedChars: [0, 1], // P1 和 P2 选择的角色索引
+    difficulty: 'normal' // AI 难度：'easy', 'normal', 'hard'
 };
+
+const AI_PERSONALITIES = ['aggressive', 'conservative', 'sneaky', 'balanced'];
 
 // 预定义角色图标
 const CHAR_ICONS = ['🤖', '🐱', '🦊', '🐶'];
@@ -47,7 +50,7 @@ class PowerUp {
         this.y = y;
         this.type = type;
         this.element = document.createElement('div');
-        this.element.className = `power-up ${type}`;
+        this.element.className = `powerup ${type}`;
         this.element.style.left = `${x * CONFIG.tileSize}px`;
         this.element.style.top = `${y * CONFIG.tileSize}px`;
         board.appendChild(this.element);
@@ -74,6 +77,7 @@ class Entity {
         this.element.className = `entity ${type} color-${CONFIG.colors[colorIndex]}`;
         this.element.dataset.facing = this.facing;
         this.updatePosition();
+        this.moveHistory = []; // 记录最近的移动历史
         board.appendChild(this.element);
     }
 
@@ -107,9 +111,15 @@ class Entity {
         this.element.dataset.facing = this.facing;
 
         if (this.canMoveTo(nx, ny)) {
+            const oldX = this.x;
+            const oldY = this.y;
             this.x = nx;
             this.y = ny;
             this.updatePosition();
+            
+            // 更新移动历史，保留最近 3 次
+            this.moveHistory.push({dx, dy});
+            if (this.moveHistory.length > 3) this.moveHistory.shift();
             
             // 检查地雷激活状态：如果所有者离开了地雷格子，则激活地雷
             gameState.landmines.forEach(m => {
@@ -584,15 +594,17 @@ class Landmine {
         this.owner = owner;
         this.isArmed = false; // 初始未激活
         this.element = document.createElement('div');
-        this.element.className = 'landmine';
+        this.element.className = 'landmine-placed'; // 使用正确的 CSS 类名
         this.element.style.left = `${x * CONFIG.tileSize}px`;
         this.element.style.top = `${y * CONFIG.tileSize}px`;
         board.appendChild(this.element);
 
-        // 放置 1 秒后进入隐形状态
+        // 放置 2 秒内闪烁，之后进入隐形状态
         this.armTimer = setTimeout(() => {
-            if (this.element) this.element.classList.add('hidden-mine');
-        }, 1000);
+            if (this.element) {
+                this.element.classList.add('hidden-mine');
+            }
+        }, 2000); // 增加到 2 秒
     }
 
     destroy() {
@@ -619,15 +631,8 @@ class Landmine {
         if (this.element && this.element.parentNode) board.removeChild(this.element);
 
         // 确定爆炸范围
-        // 如果是被连锁引爆（炸弹炸到），只引爆地雷自身那一格
-        // 如果是踩到引爆，则是 3x3 范围
-        const directions = isChainReaction ? [{dx: 0, dy: 0}] : [
-            {dx: 0, dy: 0}, // 中心
-            {dx: 0, dy: -1}, {dx: 0, dy: 1}, 
-            {dx: -1, dy: 0}, {dx: 1, dy: 0},
-            {dx: -1, dy: -1}, {dx: 1, dy: -1},
-            {dx: -1, dy: 1}, {dx: 1, dy: 1}
-        ];
+        // 地雷爆炸范围始终为仅自身所在格 (1x1)
+        const directions = [{dx: 0, dy: 0}];
 
         // 创建一个临时 Bomb 实例用于复用爆炸逻辑
         const tempBomb = Object.create(Bomb.prototype);
@@ -801,8 +806,10 @@ function updateStatusDisplay() {
             let displayName = isPlayer ? id.toUpperCase() : '敌人 ' + (entity.id || '');
             if (gameState.mode === 'ai-vs-ai' && !isPlayer) {
                 const colorNames = {blue: '蓝', red: '红', green: '绿', yellow: '黄'};
+                const personalityNames = {aggressive: '激进', conservative: '保守', sneaky: '偷袭', balanced: '平衡'};
                 const colorName = colorNames[CONFIG.colors[entity.colorIndex]];
-                displayName = `AI ${entity.id} (${colorName})`;
+                const personalityName = personalityNames[entity.personality] || '';
+                displayName = `AI ${entity.id} (${colorName}-${personalityName})`;
             }
 
             card.innerHTML = `
@@ -855,6 +862,7 @@ function updateEnemyCount() {
 }
 
 function endGame(win, customMsg) {
+    if (gameState.isGameOver) return; // 防止重复触发结算逻辑
     gameState.isGameOver = true;
     overlay.classList.remove('hidden');
     const msg = customMsg || (win ? '你赢了！' : '游戏结束');
@@ -943,6 +951,12 @@ function start() {
     gameState.rockets = [];
     gameState.enemies = [];
     gameState.players = [];
+    gameState.keys = {}; // 清除按键状态，防止重启后自动移动
+
+    // 清理 AI 路径缓存
+    if (typeof AIUtils !== 'undefined' && AIUtils.clearCache) {
+        AIUtils.clearCache();
+    }
 
     if (gameState.isTestMode) {
         generateTestLevel();
@@ -991,24 +1005,34 @@ function start() {
     if (gameState.isTestMode) {
         // 测试模式：放置一个靶子 AI 在角色正前方
         gameState.enemies = [
-            new SmartEnemy(p1X, p1Y + 1, 1, 1)
+            new SmartEnemy(p1X, p1Y + 1, 1, 1, gameState.difficulty, 'balanced')
         ];
     } else if (gameState.mode === 'ai-vs-ai') {
         // AI 互博模式：四个角落各一个 AI
         gameState.enemies = [
-            new SmartEnemy(1, 1, 1, 0),
-            new SmartEnemy(CONFIG.cols - 2, 1, 2, 1),
-            new SmartEnemy(1, CONFIG.rows - 2, 3, 2),
-            new SmartEnemy(CONFIG.cols - 2, CONFIG.rows - 2, 4, 3)
+            new SmartEnemy(1, 1, 1, 0, gameState.difficulty, 'aggressive'),
+            new SmartEnemy(CONFIG.cols - 2, 1, 2, 1, gameState.difficulty, 'conservative'),
+            new SmartEnemy(1, CONFIG.rows - 2, 3, 2, gameState.difficulty, 'sneaky'),
+            new SmartEnemy(CONFIG.cols - 2, CONFIG.rows - 2, 4, 3, gameState.difficulty, 'balanced')
         ];
     } else {
-        gameState.enemies = [
-            new SmartEnemy(CONFIG.cols - 2, 1, 1, 1),
-            new SmartEnemy(1, CONFIG.rows - 2, 2, 2)
+        // 单人/双人模式：根据难度随机分配性格
+        gameState.enemies = [];
+        const corners = [
+            {x: CONFIG.cols - 2, y: 1},
+            {x: 1, y: CONFIG.rows - 2},
+            {x: CONFIG.cols - 2, y: CONFIG.rows - 2}
         ];
-        if (gameState.mode === 'single') {
-            gameState.enemies.push(new SmartEnemy(CONFIG.cols - 2, CONFIG.rows - 2, 3, 3));
-        }
+        
+        // 确保 P2 的位置不被敌人占据（双人模式）
+        const enemyCorners = corners.filter(c => 
+            gameState.mode !== 'multi' || (c.x !== p2X || c.y !== p2Y)
+        );
+
+        enemyCorners.forEach((pos, i) => {
+            const personality = AI_PERSONALITIES[Math.floor(Math.random() * AI_PERSONALITIES.length)];
+            gameState.enemies.push(new SmartEnemy(pos.x, pos.y, i + 1, i + 1, gameState.difficulty, personality));
+        });
     }
     
     gameState.enemies.forEach(e => e.alive = true);
@@ -1085,6 +1109,15 @@ document.querySelectorAll('.p-selection').forEach((pSelect, pIdx) => {
             gameState.selectedChars[pIdx] = parseInt(option.dataset.char);
         };
     });
+});
+
+// AI 难度选择
+document.querySelectorAll('.diff-btn').forEach(btn => {
+    btn.onclick = () => {
+        document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        gameState.difficulty = btn.dataset.diff;
+    };
 });
 
 startBtn.onclick = start;
