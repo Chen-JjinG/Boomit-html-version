@@ -118,25 +118,84 @@ class AIUtils {
      */
     static getInfluenceMap(gameState, config, aiEntity) {
         const influenceMap = Array.from({ length: config.rows }, () => Array(config.cols).fill(0));
+        const players = gameState.players.filter(p => p.alive);
         
-        // 1. 道具吸引力
+        // 1. 道具吸引力与资源压制 (Resource Denial)
         gameState.powerUps.forEach(pu => {
-            this._applyRadialInfluence(influenceMap, pu.x, pu.y, 5, 2.0, config);
+            let baseStrength = 2.0;
+            
+            // 如果玩家离这个道具更近，增加吸引力（去抢夺）
+            players.forEach(p => {
+                const distToPlayer = this.getDistance(p, pu);
+                const distToAI = this.getDistance(aiEntity, pu);
+                if (distToPlayer < distToAI && distToPlayer <= 4) {
+                    baseStrength += 1.5; // 提高抢夺优先级
+                }
+            });
+            
+            this._applyRadialInfluence(influenceMap, pu.x, pu.y, 6, baseStrength, config);
         });
 
         // 2. 敌人位置及威胁
         const enemies = [...gameState.players, ...gameState.enemies].filter(e => e !== aiEntity && e.alive);
         enemies.forEach(e => {
             // 靠近敌人有进攻价值（吸引）
-            this._applyRadialInfluence(influenceMap, e.x, e.y, 4, 1.5, config);
+            let offensiveStrength = 1.5;
+            
+            // 如果敌人被困（死角），大幅增加吸引力，前去“补刀”
+            if (aiEntity.isTargetTrapped && aiEntity.isTargetTrapped(e)) {
+                offensiveStrength += 3.0;
+            }
+            
+            this._applyRadialInfluence(influenceMap, e.x, e.y, 4, offensiveStrength, config);
             
             // 敌人面对的直线区域有威胁（排斥，特别是敌人有火箭筒时）
             if (e.activeWeapon === 'rocket') {
-                this._applyLinearInfluence(influenceMap, e.x, e.y, e.facing, 8, -3.0, config);
+                this._applyLinearInfluence(influenceMap, e.x, e.y, e.facing, 8, -4.0, config);
             }
+            
+            // 避开玩家放置的炸弹范围（除了风险地图，影响图也提供排斥，让 AI 倾向于站在更开阔的地方）
+            gameState.bombs.forEach(b => {
+                if (b.owner !== aiEntity) {
+                    this._applyRadialInfluence(influenceMap, b.x, b.y, b.range + 1, -0.5, config);
+                }
+            });
         });
 
+        // 3. 战略点：狭窄通道/路口 (Chokepoints)
+        // 倾向于在玩家必经之路附近埋伏
+        if (aiEntity.activeWeapon === 'landmine') {
+            players.forEach(p => {
+                this._findChokepoints(gameState, config).forEach(cp => {
+                    const distToPlayer = this.getDistance(p, cp);
+                    if (distToPlayer <= 3) {
+                        this._applyRadialInfluence(influenceMap, cp.x, cp.y, 2, 2.0, config);
+                    }
+                });
+            });
+        }
+
         return influenceMap;
+    }
+
+    /**
+     * 辅助方法：寻找地图上的关键路口/窄道
+     */
+    static _findChokepoints(gameState, config) {
+        const chokepoints = [];
+        for (let y = 1; y < config.rows - 1; y++) {
+            for (let x = 1; x < config.cols - 1; x++) {
+                if (gameState.grid[y][x] === 'floor') {
+                    const dirs = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: 1, dy: 0}];
+                    let walls = 0;
+                    dirs.forEach(d => {
+                        if (gameState.grid[y + d.dy][x + d.dx] !== 'floor') walls++;
+                    });
+                    if (walls >= 2) chokepoints.push({x, y});
+                }
+            }
+        }
+        return chokepoints;
     }
 
     /**

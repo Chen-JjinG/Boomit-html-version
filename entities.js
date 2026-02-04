@@ -971,16 +971,42 @@ class SmartEnemy extends Entity {
     }
 
     /**
-     * 困难难度 AI：包含预测、围堵、高级武器使用的复杂逻辑
+     * 困难难度 AI：包含影响图站位、动态风险规避、资源压制等高级算法
      */
     thinkHard() {
-        const dangerMap = AIUtils.getDangerMap(gameState, CONFIG, this);
-        if (dangerMap[this.y][this.x] > 0) {
-            this.escape(dangerMap);
+        const riskMap = AIUtils.getRiskMap(gameState, CONFIG, this);
+        
+        // 1. 紧急避险：如果当前格风险较高，立即寻找代价最低的安全路径
+        if (riskMap[this.y][this.x] > 0.4) {
+            this.escape(riskMap);
             return;
         }
 
-        // 2. 寻找最近的目标
+        // 2. 获取影响图，寻找全局最优战略点
+        const influenceMap = AIUtils.getInfluenceMap(gameState, CONFIG, this);
+        let bestScore = -Infinity;
+        let bestPos = null;
+
+        // 在周围 7x7 范围内寻找分数最高且安全的战略位 (扩大搜索范围)
+        for (let dy = -3; dy <= 3; dy++) {
+            for (let dx = -3; dx <= 3; dx++) {
+                const nx = this.x + dx;
+                const ny = this.y + dy;
+                if (nx >= 0 && nx < CONFIG.cols && ny >= 0 && ny < CONFIG.rows) {
+                    if (gameState.grid[ny][nx] === 'floor' && riskMap[ny][nx] < 0.3) {
+                        let score = influenceMap[ny][nx];
+                        // 距离惩罚，鼓励就近站位
+                        score -= (Math.abs(dx) + Math.abs(dy)) * 0.15;
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestPos = { x: nx, y: ny };
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. 资源压制与进攻决策
         const targets = [...gameState.players, ...gameState.enemies].filter(e => e !== this && e.alive);
         let closestTarget = null;
         let minTargetDist = Infinity;
@@ -993,54 +1019,38 @@ class SmartEnemy extends Entity {
             }
         });
 
-        // 3. 进攻策略
         if (closestTarget) {
             const predictedTarget = this.predictTargetPosition(closestTarget);
-            let attackChance = 0.85;
-            if (this.personality === 'aggressive') attackChance = 0.95;
             
-            // 尝试“围堵”和“连招”
-            if (this.isTargetTrapped(predictedTarget)) {
-                if (this.canPlaceBombSafely()) {
-                    // 执行当前选定的武器动作（遵循道具消耗规则）
+            // 如果目标被困，优先执行“围堵”
+            if (this.isTargetTrapped(predictedTarget) && this.canPlaceBombSafely()) {
+                this.performAction();
+                return;
+            }
+
+            // 火箭筒特殊连招：预判拦截
+            if (this.activeWeapon === 'rocket' && this.rockets > 0) {
+                // 如果目标在直线路径上，或者预测位置在直线路径上
+                if ((this.x === predictedTarget.x || this.y === predictedTarget.y) && 
+                    this.hasClearShot(predictedTarget.x, predictedTarget.y)) {
                     this.performAction();
-                    
-                    // 困难 AI 连招优化：
-                    // 如果还有炸弹额度，且目标被困，尝试在附近再放一个，彻底封死
-                    // 注意：这里只有在当前武器是普通炸弹时才会连放炸弹，
-                    // 否则会消耗特殊武器。为了公平，AI 必须等待特殊武器用完或符合规则地使用。
-                    if (this.activeWeapon === 'bomb' && this.activeBombs < this.maxBombs && Math.random() < 0.5) {
-                        const neighbors = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: 1, dy: 0}];
-                        for (const d of neighbors) {
-                            const nx = this.x + d.dx;
-                            const ny = this.y + d.dy;
-                            if (this.canMoveTo(nx, ny) && this.canPlaceBombSafely()) {
-                                this.executeMove(d.dx, d.dy);
-                                return;
-                            }
-                        }
-                    }
                     return;
                 }
             }
 
+            // 地雷战术：在关键点放置
+            if (this.activeWeapon === 'landmine' && this.landmines > 0) {
+                const isAtChokepoint = AIUtils._findChokepoints(gameState, CONFIG).some(cp => cp.x === this.x && cp.y === this.y);
+                if (isAtChokepoint && AIUtils.getDistance(this, predictedTarget) <= 4) {
+                    this.performAction();
+                    return;
+                }
+            }
+
+            // 根据当前持有的武器执行进攻
+            const attackChance = this.personality === 'aggressive' ? 0.95 : 0.8;
             if (Math.random() < attackChance) {
-                // 根据当前激活的武器执行进攻逻辑
-                if (this.activeWeapon === 'rocket' && this.rockets > 0) {
-                    if ((this.x === predictedTarget.x || this.y === predictedTarget.y) && 
-                        this.hasClearShot(predictedTarget.x, predictedTarget.y)) {
-                        this.performAction();
-                        return;
-                    }
-                } 
-                else if (this.activeWeapon === 'landmine' && this.landmines > 0) {
-                    if (AIUtils.getDistance(this, predictedTarget) <= 2) {
-                        this.performAction();
-                        this.escape(AIUtils.getDangerMap(gameState, CONFIG, this));
-                        return;
-                    }
-                } 
-                else if (this.activeWeapon === 'bomb') {
+                if (this.activeWeapon === 'bomb') {
                     const inRange = (this.x === predictedTarget.x && Math.abs(this.y - predictedTarget.y) <= this.explosionRange) ||
                                   (this.y === predictedTarget.y && Math.abs(this.x - predictedTarget.x) <= this.explosionRange);
                     
@@ -1050,112 +1060,106 @@ class SmartEnemy extends Entity {
                     }
                 }
             }
+        }
 
-            // 优先移动到射击位
-            const firingPos = this.findFiringPosition(predictedTarget);
-            if (firingPos) {
-                const path = AIUtils.findPath(this, firingPos, gameState, true, false, this);
-                if (path && path.length > 0) {
-                    this.executeMove(path[0].dx, path[0].dy);
-                    return;
-                }
-            }
-            
-            const path = AIUtils.findPath(this, predictedTarget, gameState, true, false, this);
+        // 4. 移动向战略点
+        if (bestPos && (bestPos.x !== this.x || bestPos.y !== this.y)) {
+            const path = AIUtils.findPath(this, bestPos, gameState, true, false, this);
             if (path && path.length > 0) {
                 this.executeMove(path[0].dx, path[0].dy);
                 return;
             }
         }
 
-        // 4. 搜寻道具 (困难 AI 更积极搜寻道具)
-        const visiblePowerUps = gameState.powerUps.filter(p => AIUtils.getDistance(this, p) < 12);
-        if (visiblePowerUps.length > 0) {
-            let bestPath = null;
-            let minDist = Infinity;
-            for (const pu of visiblePowerUps) {
-                const path = AIUtils.findPath(this, pu, gameState, true, false, this);
-                if (path && path.length < minDist) {
-                    minDist = path.length;
-                    bestPath = path;
-                }
-            }
-            if (bestPath) {
-                this.executeMove(bestPath[0].dx, bestPath[0].dy);
-                return;
-            }
-        }
-
-        // 5. 拆墙开路
+        // 5. 如果没有明确战略点，尝试拆墙开路
         if (this.isBombUseful('wall') && this.canPlaceBombSafely()) {
             this.performAction();
             return;
         }
 
-        const wallPath = AIUtils.findPath(this, (x, y) => gameState.grid[y][x] === 'wall-soft', gameState, true, true, this);
-        if (wallPath && wallPath.length > 0) {
-            const next = wallPath[0];
-            if (next.type === 'wall-soft') {
-                if (this.canPlaceBombSafely()) this.performAction();
-            } else {
-                this.executeMove(next.dx, next.dy);
-            }
-            return;
-        }
-
-        this.randomMove(dangerMap);
+        // 6. 兜底逻辑：随机安全移动
+        this.randomMove(riskMap);
     }
 
     /**
-     * 检查目标是否处于易受攻击的状态（走廊或死角）
+     * 检查目标是否处于易受攻击的状态（不仅是死角，还包括逃生路径受限）
      */
     isTargetTrapped(target) {
+        const dangerMap = AIUtils.getDangerMap(gameState, CONFIG, this);
+        // 如果目标已经在危险中，检查其是否有逃生路径
+        if (dangerMap[target.y][target.x] > 0) {
+            const safePath = AIUtils.findPath(target, (x, y) => dangerMap[y][x] === 0, gameState, false, false, target);
+            if (!safePath) return true;
+        }
+
+        // 基础死角检查
         const dirs = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: 1, dy: 0}];
         let walkableNeighbors = 0;
         dirs.forEach(d => {
             if (this.canMoveTo(target.x + d.dx, target.y + d.dy)) walkableNeighbors++;
         });
-        return walkableNeighbors <= 2; // 只有两条或更少的路，容易被堵死
+        
+        // 如果只有 1 个出口，或者当前就在危险区且无路可逃，视为被困
+        return walkableNeighbors <= 1;
     }
 
     /**
      * 逃生逻辑：寻找安全路径
      */
-    escape(dangerMap) {
-        // 尝试寻找安全路径
-        const safePath = AIUtils.findPath(this, (x, y) => dangerMap[y][x] === 0, gameState, false, false, this);
+    escape(map) {
+        // 尝试寻找风险最低的路径 (findPath 内部会处理风险权值)
+        const safePath = AIUtils.findPath(this, (x, y) => map[y][x] === 0, gameState, true, false, this);
         if (safePath && safePath.length > 0) {
             this.executeMove(safePath[0].dx, safePath[0].dy);
         } else {
             // 如果无处可躲，尝试炸开一条生路（仅限困难难度）
             if (this.difficulty === 'hard' && this.canPlaceBombSafely()) {
-                const softWallNear = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: 1, dy: 0}].find(d => 
-                    gameState.grid[this.y + d.dy][this.x + d.dx] === 'wall-soft'
-                );
+                const dirs = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: 1, dy: 0}];
+                const softWallNear = dirs.find(d => {
+                    const nx = this.x + d.dx, ny = this.y + d.dy;
+                    return nx >= 0 && nx < CONFIG.cols && ny >= 0 && ny < CONFIG.rows && 
+                           gameState.grid[ny][nx] === 'wall-soft';
+                });
                 if (softWallNear) {
                     this.performAction();
                     return;
                 }
             }
-            this.randomMove(dangerMap);
+            this.randomMove(map);
         }
     }
 
     /**
      * 随机移动（避开危险）
      */
-    randomMove(dangerMap) {
+    randomMove(map) {
         const dirs = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: 1, dy: 0}]
             .sort(() => Math.random() - 0.5);
         
+        // 优先选择风险为 0 的格子
         for (const d of dirs) {
             const nx = this.x + d.dx;
             const ny = this.y + d.dy;
-            if (this.canMoveTo(nx, ny) && dangerMap[ny][nx] === 0) {
+            if (this.canMoveTo(nx, ny) && map[ny][nx] === 0) {
                 this.executeMove(d.dx, d.dy);
                 return;
             }
         }
+        
+        // 如果没有风险为 0 的格子，选择风险最低的格子
+        let minRisk = Infinity;
+        let bestDir = null;
+        for (const d of dirs) {
+            const nx = this.x + d.dx;
+            const ny = this.y + d.dy;
+            if (this.canMoveTo(nx, ny)) {
+                if (map[ny][nx] < minRisk) {
+                    minRisk = map[ny][nx];
+                    bestDir = d;
+                }
+            }
+        }
+        if (bestDir) this.executeMove(bestDir.dx, bestDir.dy);
     }
 
     /**
