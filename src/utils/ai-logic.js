@@ -76,6 +76,47 @@ class AIUtils {
     }
 
     /**
+     * 获取时间维度的危险图
+     * 返回一个 2D 数组，每个格子包含该位置所有炸弹的爆炸时间窗口 [{start, end}]
+     */
+    static getTimeDangerMap(gameState, config) {
+        const timeMap = Array.from({ length: config.rows }, () => 
+            Array.from({ length: config.cols }, () => [])
+        );
+        const now = Date.now();
+
+        gameState.bombs.forEach(bomb => {
+            const explodeTime = (bomb.placedTime || now) + config.bombTimer;
+            const explodeEndTime = explodeTime + (config.explosionDuration || 1000);
+            
+            // 标记爆炸中心和四个方向
+            const mark = (x, y) => {
+                if (x >= 0 && x < config.cols && y >= 0 && y < config.rows) {
+                    timeMap[y][x].push({ start: explodeTime, end: explodeEndTime });
+                    return true;
+                }
+                return false;
+            };
+
+            mark(bomb.x, bomb.y);
+            const dirs = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: 1, dy: 0}];
+            dirs.forEach(d => {
+                for (let r = 1; r <= bomb.range; r++) {
+                    const nx = bomb.x + d.dx * r;
+                    const ny = bomb.y + d.dy * r;
+                    if (nx < 0 || nx >= config.cols || ny < 0 || ny >= config.rows) break;
+                    const cell = gameState.grid[ny][nx];
+                    if (cell === 'wall-hard') break;
+                    mark(nx, ny);
+                    if (cell === 'wall-soft') break;
+                }
+            });
+        });
+
+        return timeMap;
+    }
+
+    /**
      * 获取动态风险地图 (Risk Map)
      * 0: 安全, 0.1-0.9: 潜在危险 (根据时间权重), 1.0+: 致命区域
      */
@@ -85,9 +126,14 @@ class AIUtils {
         
         // 1. 标记炸弹风险
         gameState.bombs.forEach(bomb => {
-            const timeLeft = Math.max(0, (bomb.placedTime + CONFIG.bombTimer) - now);
-            // 时间越近，风险权值越高 (从 0.5 到 1.0)
-            const riskWeight = 1.0 - (timeLeft / CONFIG.bombTimer) * 0.5;
+            // 健壮性改进：如果缺失 placedTime（如模拟炸弹），默认为刚刚放置
+            const placedTime = bomb.placedTime || now;
+            const timeLeft = Math.max(0, (placedTime + config.bombTimer) - now);
+            
+            // 时间越近，风险权值越高 (从 0.6 到 1.0)
+            // 确保即使 timeLeft 为 0 或无效，风险值也至少为 1.0
+            let riskWeight = 1.0 - (timeLeft / config.bombTimer) * 0.4;
+            if (isNaN(riskWeight)) riskWeight = 1.0;
             
             this._markArea(riskMap, bomb.x, bomb.y, bomb.range, riskWeight, gameState, config);
         });
@@ -252,7 +298,8 @@ class AIUtils {
     static getDangerMap(gameState, config, aiEntity = null) {
         const riskMap = this.getRiskMap(gameState, config, aiEntity);
         // 将风险地图简化为 0/1 以兼容旧逻辑
-        return riskMap.map(row => row.map(v => v >= 0.8 ? 1 : 0));
+        // 降低阈值到 0.5，确保只要有炸弹覆盖，即使刚放下也被视为危险区域
+        return riskMap.map(row => row.map(v => v >= 0.5 ? 1 : 0));
     }
 
     /**
@@ -276,11 +323,19 @@ class AIUtils {
         if (!isTargetFunc && startX === target.x && startY === target.y) return [];
 
         const config = CONFIG;
-        // 升级：使用风险地图进行路径代价评估
+        // 升级：获取风险地图和时间危险地图
         const riskMap = avoidDanger ? this.getRiskMap(gameState, config, aiEntity) : null;
+        const timeDangerMap = avoidDanger ? this.getTimeDangerMap(gameState, config) : null;
+        const now = Date.now();
+        const moveCooldown = aiEntity ? aiEntity.moveCooldown : 200;
+        const timeSinceLastMove = aiEntity ? (now - aiEntity.lastMoveTime) : 0;
+        
+        // 增加 150ms 的决策响应补偿，模拟 AI 从思考到发出指令的延迟
+        const reactionCompensation = 150;
+        const initialWait = Math.max(0, moveCooldown - timeSinceLastMove) + reactionCompensation;
         
         const pq = new PriorityQueue((a, b) => (a.g + a.h) < (b.g + b.h));
-        pq.push({ x: startX, y: startY, g: 0, h: 0, parent: null });
+        pq.push({ x: startX, y: startY, g: 0, h: 0, parent: null, steps: 0 });
         
         const closedList = new Set();
         const openMap = new Map();
@@ -300,6 +355,7 @@ class AIUtils {
                 return path.reverse();
             }
             
+            if (closedList.has(currentKey)) continue;
             closedList.add(currentKey);
             
             const dirs = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: 1, dy: 0}];
@@ -311,22 +367,40 @@ class AIUtils {
                 if (nx < 0 || nx >= config.cols || ny < 0 || ny >= config.rows) continue;
                 if (closedList.has(nextKey)) continue;
                 
-                const cell = gameState.grid[ny][nx];
-                if (cell === 'wall-hard') continue;
+                const cellType = gameState.grid[ny][nx];
+                if (cellType === 'wall-hard') continue;
+                if (cellType === 'wall-soft' && !includeSoftWalls) continue;
+                
+                // 检查实体阻挡（排除起点和终点）
+                const hasEntity = [...gameState.players, ...gameState.enemies].some(e => 
+                    e.alive && e !== aiEntity && e.x === nx && e.y === ny
+                );
                 
                 let moveCost = 1;
-                let cellType = 'floor';
-
-                if (cell === 'wall-soft') {
-                    if (!includeSoftWalls) continue;
-                    moveCost = 15; // 提高软墙代价
-                    cellType = 'wall-soft';
-                }
-
-                // 避开炸弹本身
-                if (gameState.bombs.some(b => b.x === nx && b.y === ny)) continue;
+                if (cellType === 'wall-soft') moveCost = 10;
                 
-                // 避开致命风险 (risk >= 0.8)
+                // 改进：实体不再是硬阻挡，而是高代价路径，防止 AI 因为队友临时挡路而误判为死路
+                if (hasEntity) moveCost += 5;
+                
+                // --- 核心改进：时间轴安全性检查（增加安全冗余） ---
+                if (avoidDanger && timeDangerMap) {
+                    const arrivalTime = now + initialWait + (current.steps + 1) * moveCooldown;
+                    const dangerWindows = timeDangerMap[ny][nx];
+                    let isFatal = false;
+                    
+                    for (const window of dangerWindows) {
+                        // 增加 350ms 的安全冗余缓冲 (之前是 100ms)
+                        // 这包含了：网络抖动容错、渲染帧率波动以及 AI 转向耗时
+                        const safetyBuffer = 350;
+                        if (arrivalTime + safetyBuffer >= window.start && arrivalTime <= window.end + safetyBuffer) {
+                            isFatal = true;
+                            break;
+                        }
+                    }
+                    if (isFatal) continue;
+                }
+                
+                // 避开静态致命风险 (risk >= 0.8)
                 if (avoidDanger && riskMap && riskMap[ny][nx] >= 0.8) continue;
                 
                 // 动态代价：经过有风险的区域会增加路径代价
@@ -339,7 +413,7 @@ class AIUtils {
                 
                 const existingG = openMap.get(nextKey);
                 if (existingG === undefined || g < existingG) {
-                    pq.push({ x: nx, y: ny, g, h, parent: current, type: cellType });
+                    pq.push({ x: nx, y: ny, g, h, parent: current, type: cellType, steps: current.steps + 1 });
                     openMap.set(nextKey, g);
                 }
             }

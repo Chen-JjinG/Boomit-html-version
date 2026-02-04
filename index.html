@@ -105,10 +105,21 @@
             <button id="start-button">开始游戏</button>
         </div>
     </div>
-    <script src="config.js"></script>
-    <script src="ai-utils.js"></script>
-    <script src="entities.js"></script>
-    <script src="ui.js"></script>
-    <script src="game-logic.js"></script>
+    <!-- 核心逻辑和工具 -->
+    <script src="src/core/config.js"></script>
+    <script src="src/utils/ai-logic.js"></script>
+    
+    <!-- 实体类 (注意加载顺序：基类 -> 子类) -->
+    <script src="src/entities/powerup.js"></script>
+    <script src="src/entities/entity.js"></script>
+    <script src="src/entities/player.js"></script>
+    <script src="src/entities/bomb.js"></script>
+    <script src="src/entities/rocket.js"></script>
+    <script src="src/entities/landmine.js"></script>
+    <script src="src/entities/smart-enemy.js"></script>
+    
+    <!-- UI 和 游戏主逻辑 -->
+    <script src="src/core/ui.js"></script>
+    <script src="src/core/game-logic.js"></script>
 </body>
 </html>

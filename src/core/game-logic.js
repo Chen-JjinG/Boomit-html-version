@@ -278,6 +278,7 @@ function start() {
     gameState.enemies.forEach(e => e.alive = true);
     gameState.isStarted = true;
     gameState.isGameOver = false;
+    gameState.startTime = Date.now(); // 记录游戏开始时间
     UI.hideScreens();
     UI.updateEnemyCount();
     UI.updateStatusDisplay();
