@@ -139,6 +139,12 @@ class Entity {
                 if (mine) {
                     mine.checkTrigger(this);
                 }
+
+                // 检查火箭碰撞
+                const rocket = gameState.rockets.find(r => r.x === nx && r.y === ny);
+                if (rocket) {
+                    rocket.explode(nx, ny);
+                }
             }
             return true;
         }
@@ -478,6 +484,7 @@ class Rocket {
         this.dx = dx;
         this.dy = dy;
         this.owner = owner;
+        this.exploded = false;
         this.element = document.createElement('div');
         this.element.className = 'rocket-projectile';
         this.element.textContent = '🚀';
@@ -502,8 +509,18 @@ class Rocket {
     }
 
     checkCollision(nx, ny) {
+        if (this.exploded) return true;
+
         // 1. 碰撞检测：墙壁
         if (nx < 0 || nx >= CONFIG.cols || ny < 0 || ny >= CONFIG.rows || gameState.grid[ny][nx] !== 'floor') {
+            this.explode(nx, ny);
+            return true;
+        }
+
+        // 1.5 碰撞检测：炸弹或地雷
+        const hasObstacle = gameState.bombs.some(b => b.x === nx && b.y === ny) || 
+                           gameState.landmines.some(m => m.x === nx && m.y === ny);
+        if (hasObstacle) {
             this.explode(nx, ny);
             return true;
         }
@@ -521,6 +538,13 @@ class Rocket {
     }
 
     move() {
+        if (this.exploded) return;
+
+        // 在移动前，先检测当前格是否有人（处理敌人主动撞上火箭的情况）
+        if (this.checkCollision(this.x, this.y)) {
+            return;
+        }
+
         // 在移动前，在当前位置留下轨迹
         this.createTrail();
 
@@ -551,6 +575,9 @@ class Rocket {
     }
 
     explode(ex, ey) {
+        if (this.exploded) return;
+        this.exploded = true;
+
         clearInterval(this.moveInterval);
         if (this.element && this.element.parentNode) board.removeChild(this.element);
         gameState.rockets = gameState.rockets.filter(r => r !== this);
