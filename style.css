@@ -65,6 +65,16 @@ body {
     font-size: 16px;
 }
 
+.death-cause {
+    color: #e74c3c;
+    font-size: 0.85em;
+    margin-bottom: 10px;
+    padding: 5px;
+    background: rgba(231, 76, 60, 0.1);
+    border-radius: 4px;
+    border-left: 3px solid #e74c3c;
+}
+
 .status-items {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
