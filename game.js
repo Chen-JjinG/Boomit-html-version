@@ -282,10 +282,16 @@ class Entity {
             return;
         }
 
-        if (this.element && this.element.parentNode) {
-            this.element.parentNode.removeChild(this.element);
-        }
         this.alive = false;
+        if (this.element) {
+            this.element.classList.add('entity-death');
+            // 阵亡动画结束后再移除 DOM
+            setTimeout(() => {
+                if (this.element && this.element.parentNode) {
+                    this.element.parentNode.removeChild(this.element);
+                }
+            }, 1500);
+        }
     }
 
     destroy() {
@@ -409,26 +415,19 @@ class Bomb {
         for (let i = gameState.enemies.length - 1; i >= 0; i--) {
             const enemy = gameState.enemies[i];
             if (enemy.x === ex && enemy.y === ey) {
+                if (!enemy.alive) continue; // 已经在阵亡动画中
                 enemy.die();
                 
                 if (!gameState.isTestMode) {
-                    gameState.enemies.splice(i, 1);
-                    updateEnemyCount();
-                    
-                    // 检查胜利条件
-                    if (gameState.mode === 'ai-vs-ai') {
-                        if (gameState.enemies.length === 1 && gameState.players.length === 0) {
-                            endGame(true, `AI ${gameState.enemies[0].id} 获得了最终胜利！`);
-                        } else if (gameState.enemies.length === 0 && gameState.players.length === 0) {
-                            endGame(false, '同归于尽！没有人获胜。');
+                    // 延迟检查胜负逻辑，等待阵亡动画
+                    setTimeout(() => {
+                        const index = gameState.enemies.indexOf(enemy);
+                        if (index !== -1) {
+                            gameState.enemies.splice(index, 1);
+                            updateEnemyCount();
                         }
-                    } else if (gameState.enemies.length === 0) {
-                        if (gameState.mode === 'single') {
-                            endGame(true, '恭喜！你消灭了所有敌人！');
-                        } else if (gameState.players.length > 0) {
-                            endGame(true, '合作愉快！所有敌人已被消灭！');
-                        }
-                    }
+                        checkGameEnd();
+                    }, 1500);
                 }
             }
         }
@@ -863,23 +862,45 @@ function getHexColor(index) {
 function handlePlayerDeath(player) {
     if (gameState.isGameOver || !player.alive) return;
     
-    player.alive = false;
     player.die();
     updateStatusDisplay();
 
     // 检查胜负
     if (gameState.isTestMode) return; // 测试模式不移除玩家，也不检查胜负
     
-    const index = gameState.players.indexOf(player);
-    if (index !== -1) {
-        gameState.players.splice(index, 1);
-    }
-    
-    if (gameState.players.length === 0) {
-        endGame(false); // 玩家全部阵亡
-    } else if (gameState.mode === 'multi' && gameState.players.length === 1) {
-        if (gameState.enemies.length === 0) {
-            endGame(true, `P${gameState.players[0].id} 最终获胜！`);
+    // 延迟检查胜负逻辑，等待阵亡动画
+    setTimeout(() => {
+        const index = gameState.players.indexOf(player);
+        if (index !== -1) {
+            gameState.players.splice(index, 1);
+        }
+        
+        // 提取公共的胜负检查逻辑
+        checkGameEnd();
+    }, 1500);
+}
+
+// 提取公共的胜负检查逻辑
+function checkGameEnd() {
+    if (gameState.isGameOver) return;
+
+    if (gameState.mode === 'ai-vs-ai') {
+        if (gameState.enemies.length === 1 && gameState.players.length === 0) {
+            endGame(true, `AI ${gameState.enemies[0].id} 获得了最终胜利！`);
+        } else if (gameState.enemies.length === 0 && gameState.players.length === 0) {
+            endGame(false, '同归于尽！没有人获胜。');
+        }
+    } else {
+        if (gameState.players.length === 0) {
+            endGame(false); // 玩家全部阵亡
+        } else if (gameState.enemies.length === 0) {
+            if (gameState.mode === 'single') {
+                endGame(true, '恭喜！你消灭了所有敌人！');
+            } else if (gameState.mode === 'multi' && gameState.players.length === 1) {
+                endGame(true, `P${gameState.players[0].id} 最终获胜！`);
+            } else {
+                endGame(true, '合作愉快！所有敌人已被消灭！');
+            }
         }
     }
 }

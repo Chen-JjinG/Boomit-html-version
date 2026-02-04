@@ -265,6 +265,31 @@ body {
     50% { opacity: 0; filter: brightness(2); }
 }
 
+/* 角色阵亡动画 */
+.entity-death {
+    animation: entity-death-anim 1.5s forwards ease-out;
+    pointer-events: none; /* 阵亡期间不可交互 */
+    z-index: 5;
+}
+
+@keyframes entity-death-anim {
+    0% { 
+        filter: grayscale(0) brightness(1);
+        transform: scale(1) rotate(0deg);
+        opacity: 1;
+    }
+    30% {
+        filter: grayscale(1) brightness(1.5);
+        transform: scale(1.1) rotate(0deg);
+        opacity: 1;
+    }
+    100% {
+        filter: grayscale(1) brightness(0.5);
+        transform: scale(0.8) rotate(15deg) translateY(10px);
+        opacity: 0;
+    }
+}
+
 .powerup.range { background: #e67e22; }
 .powerup.speed { background: #9b59b6; }
 .powerup.bombCount { background: #34495e; }
