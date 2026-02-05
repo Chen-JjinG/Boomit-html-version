@@ -224,6 +224,18 @@ class HardStrategy extends BaseAIStrategy {
                 score -= distFromMe * 0.2; // 降低移动代价的扣分，鼓励长途奔袭
                 score += Math.random() * 2; // 增加随机性，防止路径死循环
 
+                // 5. 历史路径惩罚 (防止来回拉扯)
+                if (me.positionHistory) {
+                    const visitedIndex = me.positionHistory.findIndex(pos => pos.x === x && pos.y === y);
+                    if (visitedIndex !== -1) {
+                        // 越近的历史惩罚越重
+                        // positionHistory 末尾是最近的位置
+                        const recency = me.positionHistory.length - 1 - visitedIndex;
+                        // 最近一步惩罚 10，前几步递减
+                        score -= Math.max(0, 10 - recency * 2);
+                    }
+                }
+
                 candidates.push({ x, y, score });
             }
         }

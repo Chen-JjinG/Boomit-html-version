@@ -22,6 +22,7 @@ class SmartEnemy extends Entity {
         
         this.lastActionTime = 0;
         this.currentTargetPath = null; 
+        this.positionHistory = []; // 记录最近访问的坐标，防止死循环
 
         // 初始化策略
         this.strategy = this._createStrategy(difficulty);
@@ -285,6 +286,11 @@ class SmartEnemy extends Entity {
         
         if (this.move(dx, dy)) {
             this.lastMoveTime = now;
+            
+            // 记录位置历史 (最多 8 步)
+            this.positionHistory.push({x: this.x, y: this.y});
+            if (this.positionHistory.length > 8) this.positionHistory.shift();
+            
             return true;
         }
         return false;
